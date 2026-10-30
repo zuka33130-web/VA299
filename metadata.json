@@ -1,0 +1,6 @@
+{
+  "name": "Pixelverse: El Reinicio del Universo",
+  "description": "Experiencia narrativa interactiva donde nace Pixel, personalizas a tu Arquitecto en CSS pixel-art y compites en el clásico Pong de 1972 rumbo a Space Invaders.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

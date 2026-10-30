@@ -1,0 +1,16 @@
+{
+    "$schema":  "https://opencode.ai/config.json",
+    "model":  "opencode/deepseek-v4.1-flash-free",
+    "small_model":  "opencode/glm-5.3-flash-free",
+    "watcher":  {
+                    "ignore":  [
+                                   "node_modules/**",
+                                   "dist/**",
+                                   "build/**",
+                                   "coverage/**",
+                                   ".git/**",
+                                   ".vite/**",
+                                   ".next/**"
+                               ]
+                }
+}

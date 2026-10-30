@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.tmp_edge_profile/
+tmp_*.jpg
+tmp_*.png
+tmp_*.mjs
+.env
+.env.*
+.next/

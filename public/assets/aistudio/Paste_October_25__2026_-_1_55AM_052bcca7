@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PIXELVERSE: EL ORIGEN - ARCHIPIÉLAGO CERO</title>
+    <style>
+        :root {
+            --bg-color: #020205;
+            --neon-cyan: #00f3ff;
+            --neon-purple: #9d00ff;
+            --neon-red: #ff003c;
+            --neon-green: #00ff66;
+            --font-retro: 'Courier New', Courier, monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+        body, html { width: 100vw; height: 100vh; background-color: var(--bg-color); color: #fff; font-family: var(--font-retro); overflow: hidden; }
+
+        /* CRT & Scanlines */
+        #crt-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.25) 50%), linear-gradient(90deg, rgba(255,0,0,0.06), rgba(0,255,0,0.02), rgba(0,0,255,0.06));
+            background-size: 100% 4px, 3px 100%;
+            z-index: 9999; pointer-events: none; opacity: 0.8;
+        }
+
+        #game-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; z-index: 100; }
+        
+        .view-state { position: absolute; width: 100%; height: 100%; display: none; flex-direction: column; justify-content: center; align-items: center; opacity: 0; transition: opacity 0.5s ease; background: var(--bg-color); }
+        .view-state.active { display: flex; opacity: 1; }
+
+        canvas { display: block; image-rendering: pixelated; box-shadow: 0 0 20px rgba(0,243,255,0.1); }
+
+        /* UI Elements */
+        .title-glitch { font-size: 4rem; font-weight: bold; text-shadow: 2px 2px 0px var(--neon-cyan), -2px -2px 0px var(--neon-purple); letter-spacing: 0.3rem; text-align: center; margin-bottom: 20px;}
+        .btn-ui { background: transparent; color: var(--neon-cyan); border: 2px solid var(--neon-cyan); padding: 15px 40px; font-family: var(--font-retro); font-size: 1.2rem; cursor: pointer; text-transform: uppercase; transition: 0.2s; }
+        .btn-ui:hover { background: var(--neon-cyan); color: #000; box-shadow: 0 0 15px var(--neon-cyan); }
+        
+        /* HUD & Overlay */
+        #hud { position: absolute; top: 20px; left: 20px; z-index: 1000; display: none; pointer-events: none; }
+        .hud-text { font-size: 1.2rem; color: var(--neon-cyan); text-shadow: 0 0 5px var(--neon-cyan); margin-bottom: 5px; }
+
+        #dialog-box { position: absolute; bottom: 40px; width: 80%; max-width: 800px; background: rgba(0,0,0,0.9); border: 2px solid var(--neon-purple); padding: 20px; z-index: 1000; display: none; border-radius: 8px; box-shadow: inset 0 0 15px rgba(157,0,255,0.3); }
+        #dialog-text { font-size: 1.2rem; line-height: 1.6; color: #fff; }
+
+        #memory-restored { position: absolute; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 2000; }
+        .memory-title { font-size: 3rem; color: #ffd700; text-shadow: 0 0 20px #ffd700; margin-bottom: 20px; }
+        .memory-card { background: rgba(255,255,255,0.1); border: 1px solid var(--neon-cyan); padding: 30px; border-radius: 10px; text-align: center; max-width: 600px; }
+        .memory-card h3 { color: var(--neon-cyan); font-size: 2rem; margin-bottom: 15px; }
+        .memory-card p { font-size: 1.2rem; line-height: 1.5; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div id="crt-overlay"></div>
+
+    <div id="hud">
+        <div class="hud-text" id="hud-zone">ZONA: ARCHIPIÉLAGO CERO</div>
+        <div class="hud-text" id="hud-diamonds">DIAMANTES: 0</div>
+    </div>
+
+    <div id="dialog-box"><div id="dialog-text"></div></div>
+
+    <div id="memory-restored">
+        <h1 class="memory-title">MEMORIA DESBLOQUEADA</h1>
+        <div class="memory-card">
+            <h3 id="mem-game">PONG</h3>
+            <p id="mem-year">Año: 1972 | Creador: Allan Alcorn | Atari</p>
+            <p id="mem-fact">Dato: El primer prototipo se atascó porque la gente introdujo demasiadas monedas en el mecanismo.</p>
+            <p style="color: var(--neon-green); margin-top: 20px;">Este juego ha sido restaurado para la humanidad.</p>
+            <button class="btn-ui" id="btn-close-memory" style="margin-top: 20px;">Continuar Viaje</button>
+        </div>
+    </div>
+
+    <div id="game-container">
+        <!-- ESTADO 1: CINEMÁTICA -->
+        <section id="state-cinematic" class="view-state active">
+            <canvas id="canvas-cinematic"></canvas>
+        </section>
+
+        <!-- ESTADO 2: TÍTULO -->
+        <section id="state-title" class="view-state">
+            <h1 class="title-glitch">PIXELVERSE</h1>
+            <h2 style="color: var(--neon-purple); margin-bottom: 40px; letter-spacing: 5px;">EL REINICIO DEL UNIVERSO</h2>
+            <button class="btn-ui" id="btn-start">INICIAR EXPLORACIÓN</button>
+        </section>
+
+        <!-- ESTADO 3: OVERWORLD MAP (ISLA 70S) -->
+        <section id="state-map" class="view-state">
+            <canvas id="canvas-map"></canvas>
+        </section>
+
+        <!-- ESTADO 4: PONG -->
+        <section id="state-pong" class="view-state">
+            <div style="border: 10px solid #d8a61b; border-radius: 20px 20px 0 0; padding: 20px; background: #111; box-shadow: inset 0 0 30px #000;">
+                <canvas id="canvas-pong" width="800" height="600"></canvas>
+            </div>
+            <p style="margin-top: 15px; color: var(--neon-cyan);">[W/S] Mover Paleta | Gana a los 3 puntos</p>
+        </section>
+
+        <!-- ESTADO 5: CHRONOS DASH -->
+        <section id="state-dash" class="view-state">
+            <canvas id="canvas-dash"></canvas>
+        </section>
+
+        <!-- ESTADO 6: SPACE INVADERS -->
+        <section id="state-invaders" class="view-state">
+            <div style="border: 10px solid #222; border-bottom: 40px solid #111; padding: 20px; background: #050505;">
+                <canvas id="canvas-invaders" width="800" height="600"></canvas>
+            </div>
+            <p style="margin-top: 15px; color: var(--neon-cyan);">[A/D] Mover | [ESPACIO] Disparar</p>
+        </section>
+    </div>
+
+    <script>
+        // --- UTILIDADES ---
+        const Input = { keys: {} };
+        window.addEventListener('keydown', e => Input.keys[e.code] = true);
+        window.addEventListener('keyup', e => Input.keys[e.code] = false);
+
+        function drawRetroSprite(ctx, x, y, size, color, glow) {
+            ctx.fillStyle = color;
+            ctx.shadowBlur = glow ? 15 : 0;
+            ctx.shadowColor = color;
+            ctx.fillRect(x, y, size, size);
+            ctx.shadowBlur = 0;
+        }
+
+        // --- CLASES DE JUEGO ---
+
+        class Cinematic {
+            constructor(canvas, onComplete) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.onComplete = onComplete;
+                this.resize();
+                this.time = 0;
+                this.phase = 0;
+                this.dialogs = [
+                    "Tuberías verdes, barriles de madera, anillos dorados y cerezas flotan fragmentados en el vacío mientras el código se corrompe.",
+                    "En el epicentro irrumpe SUPER BOWSER, una amalgama colosal de los grandes villanos clásicos."
+                ];
+                
+                // Elementos procedurales
+                this.particles = Array.from({length: 100}, () => ({
+                    x: Math.random() * this.canvas.width, y: Math.random() * this.canvas.height,
+                    vx: (Math.random() - 0.5) * 2, vy: (Math.random() - 0.5) * 2, size: Math.random() * 3
+                }));
+
+                this.showDialog(this.dialogs[0]);
+                setTimeout(() => { this.phase = 1; this.showDialog(this.dialogs[1]); }, 6000);
+                setTimeout(() => { this.hideDialog(); this.onComplete(); }, 12000);
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            showDialog(text) {
+                const box = document.getElementById('dialog-box');
+                const txt = document.getElementById('dialog-text');
+                box.style.display = 'block';
+                txt.innerHTML = '';
+                let i = 0;
+                this.typeInterval = setInterval(() => {
+                    txt.innerHTML += text.charAt(i);
+                    i++;
+                    if (i >= text.length) clearInterval(this.typeInterval);
+                }, 30);
+            }
+
+            hideDialog() { document.getElementById('dialog-box').style.display = 'none'; }
+
+            update() {
+                this.time += 0.016;
+                this.ctx.fillStyle = '#020205';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.globalCompositeOperation = 'lighter';
+                this.particles.forEach(p => {
+                    p.x += p.vx; p.y += p.vy;
+                    if (p.x < 0) p.x = this.canvas.width; if (p.x > this.canvas.width) p.x = 0;
+                    if (p.y < 0) p.y = this.canvas.height; if (p.y > this.canvas.height) p.y = 0;
+                    drawRetroSprite(this.ctx, p.x, p.y, p.size, '#00f3ff', true);
+                });
+                this.ctx.globalCompositeOperation = 'source-over';
+
+                const cx = this.canvas.width / 2;
+                const cy = this.canvas.height / 2;
+
+                if (this.phase === 0) {
+                    // Fragmentos retro cayendo
+                    this.ctx.save();
+                    this.ctx.translate(cx, cy + Math.sin(this.time) * 20);
+                    this.ctx.rotate(this.time * 0.5);
+                    // Anillo (Dorado)
+                    this.ctx.strokeStyle = '#ffd700'; this.ctx.lineWidth = 10; this.ctx.shadowBlur = 20; this.ctx.shadowColor = '#ffd700';
+                    this.ctx.beginPath(); this.ctx.arc(-100, -100, 30, 0, Math.PI*2); this.ctx.stroke();
+                    // Tubería (Verde)
+                    this.ctx.fillStyle = '#00ff00'; this.ctx.shadowColor = '#00ff00';
+                    this.ctx.fillRect(80, 80, 60, 80); this.ctx.fillRect(70, 80, 80, 20);
+                    this.ctx.restore();
+                } else if (this.phase === 1) {
+                    // Super Bowser silueta
+                    this.ctx.save();
+                    this.ctx.translate(cx, cy);
+                    this.ctx.scale(1 + Math.sin(this.time*2)*0.05, 1 + Math.sin(this.time*2)*0.05);
+                    this.ctx.fillStyle = '#ff0000'; this.ctx.shadowBlur = 50; this.ctx.shadowColor = '#ff003c';
+                    this.ctx.beginPath(); this.ctx.arc(0, 0, 150, 0, Math.PI*2); this.ctx.fill(); // Cuerpo principal
+                    this.ctx.fillStyle = '#ffd700'; this.ctx.fillRect(-120, -100, 40, 40); this.ctx.fillRect(80, -100, 40, 40); // Cuernos
+                    this.ctx.fillStyle = '#fff'; this.ctx.shadowColor = '#fff';
+                    this.ctx.fillRect(-60, -40, 40, 20); this.ctx.fillRect(20, -40, 40, 20); // Ojos
+                    this.ctx.restore();
+                }
+            }
+        }
+
+        class OverworldMap {
+            constructor(canvas, gameManager) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.gm = gameManager;
+                this.resize();
+                this.nodes = [
+                    { id: 'pong', x: 200, y: this.canvas.height - 200, name: "Santuario Pong (1972)", unlocked: true, type: 'game' },
+                    { id: 'dash', x: 500, y: this.canvas.height - 350, name: "Chronos Dash", unlocked: false, type: 'travel' },
+                    { id: 'invaders', x: 800, y: this.canvas.height - 500, name: "Fortaleza Oleadas (1978)", unlocked: false, type: 'game' }
+                ];
+                this.player = { x: 200, y: this.canvas.height - 200, targetId: 'pong' };
+                this.time = 0;
+            }
+
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+
+            unlockNode(id) {
+                const node = this.nodes.find(n => n.id === id);
+                if (node) node.unlocked = true;
+            }
+
+            update() {
+                this.time += 0.05;
+                this.ctx.fillStyle = '#020205';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                // Dibujar la Gran Isla 70s
+                this.ctx.fillStyle = '#0a2a1a';
+                this.ctx.beginPath();
+                this.ctx.ellipse(500, this.canvas.height - 300, 600, 400, 0, 0, Math.PI*2);
+                this.ctx.fill();
+
+                // Nodos y Caminos
+                this.ctx.lineWidth = 4;
+                for (let i = 0; i < this.nodes.length - 1; i++) {
+                    const n1 = this.nodes[i];
+                    const n2 = this.nodes[i+1];
+                    this.ctx.strokeStyle = n2.unlocked ? '#00f3ff' : '#333';
+                    this.ctx.setLineDash(n2.unlocked ? [] : [10, 10]);
+                    this.ctx.beginPath(); this.ctx.moveTo(n1.x, n1.y); this.ctx.lineTo(n2.x, n2.y); this.ctx.stroke();
+                    this.ctx.setLineDash([]);
+                }
+
+                this.nodes.forEach(n => {
+                    this.ctx.fillStyle = n.unlocked ? (n.type === 'game' ? '#ffd700' : '#00f3ff') : '#555';
+                    this.ctx.shadowBlur = n.unlocked ? 15 : 0;
+                    this.ctx.shadowColor = this.ctx.fillStyle;
+                    this.ctx.beginPath(); this.ctx.arc(n.x, n.y, 20, 0, Math.PI*2); this.ctx.fill();
+                    this.ctx.shadowBlur = 0;
+                    this.ctx.fillStyle = '#fff';
+                    this.ctx.font = '16px Courier New';
+                    this.ctx.fillText(n.name, n.x - 40, n.y + 40);
+                });
+
+                // Player cursor
+                const target = this.nodes.find(n => n.id === this.player.targetId);
+                if (target) {
+                    this.player.x += (target.x - this.player.x) * 0.1;
+                    this.player.y += (target.y - this.player.y) * 0.1;
+                }
+                drawRetroSprite(this.ctx, this.player.x - 10, this.player.y - 10 - Math.sin(this.time)*10, 20, '#ff003c', true);
+            }
+        }
+
+        class PongGame {
+            constructor(canvas, onWin) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.onWin = onWin;
+                this.reset();
+            }
+            reset() {
+                this.p1 = { y: 250, score: 0 }; 
+                this.p2 = { y: 250, score: 0 };
+                this.ball = { x: 400, y: 300, vx: 6, vy: 6 };
+                this.active = true;
+            }
+            update() {
+                if (!this.active) return;
+                
+                if (Input.keys['KeyW'] && this.p1.y > 0) this.p1.y -= 8;
+                if (Input.keys['KeyS'] && this.p1.y < 500) this.p1.y += 8;
+                
+                // IA simple
+                if (this.ball.y < this.p2.y + 50) this.p2.y -= 5;
+                if (this.ball.y > this.p2.y + 50) this.p2.y += 5;
+
+                this.ball.x += this.ball.vx; this.ball.y += this.ball.vy;
+
+                if (this.ball.y <= 0 || this.ball.y >= 590) this.ball.vy *= -1;
+                if (this.ball.x <= 40 && this.ball.y >= this.p1.y && this.ball.y <= this.p1.y + 100) this.ball.vx *= -1.1;
+                if (this.ball.x >= 750 && this.ball.y >= this.p2.y && this.ball.y <= this.p2.y + 100) this.ball.vx *= -1.1;
+
+                if (this.ball.x < 0) { this.p2.score++; this.ball.x=400; this.ball.y=300; this.ball.vx=6; }
+                if (this.ball.x > 800) { this.p1.score++; this.ball.x=400; this.ball.y=300; this.ball.vx=-6; }
+
+                if (this.p1.score >= 3) {
+                    this.active = false;
+                    this.onWin();
+                }
+
+                this.ctx.fillStyle = '#000'; this.ctx.fillRect(0,0,800,600);
+                this.ctx.fillStyle = '#fff'; this.ctx.shadowBlur = 15; this.ctx.shadowColor = '#fff';
+                
+                for(let i=0; i<600; i+=30) this.ctx.fillRect(395, i, 10, 15);
+                this.ctx.fillRect(20, this.p1.y, 20, 100);
+                this.ctx.fillRect(760, this.p2.y, 20, 100);
+                this.ctx.fillRect(this.ball.x, this.ball.y, 15, 15);
+                
+                this.ctx.font = '60px Courier New';
+                this.ctx.fillText(this.p1.score, 200, 80); 
+                this.ctx.fillText(this.p2.score, 560, 80);
+                this.ctx.shadowBlur = 0;
+            }
+        }
+
+        class ChronosDash {
+            constructor(canvas, onWin) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.onWin = onWin;
+                this.resize();
+                this.reset();
+            }
+            resize() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+            }
+            reset() {
+                this.player = { x: 100, y: 100, vx: 0, vy: 0, width: 30, height: 30, dashCooldown: 0 };
+                this.gravity = 0.5; this.isGrounded = false;
+                this.camera = { x: 0 };
+                this.platforms = [
+                    {x: 0, y: 500, w: 600, h: 50},
+                    {x: 700, y: 450, w: 200, h: 20, sync: true, active: true},
+                    {x: 1000, y: 400, w: 200, h: 20},
+                    {x: 1300, y: 300, w: 150, h: 20, sync: true, active: false},
+                    {x: 1600, y: 500, w: 800, h: 50} // Meta
+                ];
+                this.diamonds = [{x: 750, y: 400, collected: false}, {x: 1350, y: 250, collected: false}];
+                this.glitches = [{x: 1100, y: 370, w: 30, h: 30, vx: 2}];
+                this.time = 0;
+                this.active = true;
+            }
+            update() {
+                if (!this.active) return;
+                this.time += 0.016;
+
+                // Sync platforms toggling
+                this.platforms.forEach(p => {
+                    if (p.sync) p.active = Math.sin(this.time * 2 + p.x) > 0;
+                });
+
+                // Input
+                if (Input.keys['KeyA']) this.player.vx -= 1;
+                if (Input.keys['KeyD']) this.player.vx += 1;
+                this.player.vx *= 0.8; // Fricción
+                
+                if (Input.keys['Space'] && this.isGrounded) {
+                    this.player.vy = -12;
+                    this.isGrounded = false;
+                }
+                
+                if (Input.keys['ShiftLeft'] && this.player.dashCooldown <= 0) {
+                    this.player.vx = this.player.vx > 0 ? 30 : -30;
+                    this.player.dashCooldown = 60;
+                }
+                if (this.player.dashCooldown > 0) this.player.dashCooldown--;
+
+                this.player.vy += this.gravity;
+                this.player.x += this.player.vx;
+                this.player.y += this.player.vy;
+
+                // Colisiones Plataformas
+                this.isGrounded = false;
+                this.platforms.forEach(p => {
+                    if (p.sync && !p.active) return;
+                    if (this.player.x < p.x + p.w && this.player.x + this.player.width > p.x &&
+                        this.player.y + this.player.height > p.y && this.player.y + this.player.height < p.y + p.h + 15 && this.player.vy >= 0) {
+                        this.player.y = p.y - this.player.height;
+                        this.player.vy = 0;
+                        this.isGrounded = true;
+                    }
+                });
+
+                // Muerte por caída
+                if (this.player.y > this.canvas.height) this.reset();
+
+                // Recolección diamantes
+                this.diamonds.forEach(d => {
+                    if (!d.collected && Math.abs(this.player.x - d.x) < 40 && Math.abs(this.player.y - d.y) < 40) {
+                        d.collected = true;
+                    }
+                });
+
+                // Glitches
+                this.glitches.forEach(g => {
+                    g.x += g.vx;
+                    if (g.x > 1200 || g.x < 1000) g.vx *= -1;
+                    if (Math.abs(this.player.x - g.x) < 30 && Math.abs(this.player.y - g.y) < 30) this.reset();
+                });
+
+                // Victoria (Llegar al final)
+                if (this.player.x > 2200) {
+                    this.active = false;
+                    this.onWin();
+                }
+
+                // Cámara
+                this.camera.x += (this.player.x - this.canvas.width/3 - this.camera.x) * 0.1;
+
+                // --- RENDER ---
+                this.ctx.fillStyle = '#050a15';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+                this.ctx.save();
+                this.ctx.translate(-this.camera.x, 0);
+
+                // Grid background parallax
+                this.ctx.strokeStyle = 'rgba(0, 243, 255, 0.1)';
+                this.ctx.beginPath();
+                for(let i=0; i<3000; i+=100) {
+                    this.ctx.moveTo(i, 0); this.ctx.lineTo(i, this.canvas.height);
+                }
+                this.ctx.stroke();
+
+                // Plataformas
+                this.platforms.forEach(p => {
+                    if (p.sync && !p.active) {
+                        this.ctx.strokeStyle = 'rgba(255,0,60,0.3)';
+                        this.ctx.strokeRect(p.x, p.y, p.w, p.h);
+                    } else {
+                        this.ctx.fillStyle = '#0a2a1a';
+                        this.ctx.shadowBlur = 10; this.ctx.shadowColor = '#00ff66';
+                        this.ctx.fillRect(p.x, p.y, p.w, p.h);
+                        this.ctx.shadowBlur = 0;
+                    }
+                });
+
+                // Diamantes
+                this.diamonds.forEach(d => {
+                    if (!d.collected) drawRetroSprite(this.ctx, d.x, d.y + Math.sin(this.time*5)*5, 15, '#00f3ff', true);
+                });
+
+                // Glitches
+                this.glitches.forEach(g => {
+                    drawRetroSprite(this.ctx, g.x, g.y, g.w, '#9d00ff', true);
+                });
+
+                // Player
+                drawRetroSprite(this.ctx, this.player.x, this.player.y, this.player.width, '#ff003c', this.player.dashCooldown > 0);
+
+                this.ctx.restore();
+            }
+        }
+
+        class SpaceInvaders {
+            constructor(canvas, onWin) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.onWin = onWin;
+                this.reset();
+            }
+            reset() {
+                this.player = { x: 375, y: 530, w: 50, h: 20 };
+                this.bullets = [];
+                this.aliens = [];
+                for (let r=0; r<4; r++) {
+                    for (let c=0; c<8; c++) {
+                        this.aliens.push({ x: 100 + c*60, y: 50 + r*50, w: 30, h: 20, active: true });
+                    }
+                }
+                this.alienDir = 2;
+                this.fireCooldown = 0;
+                this.active = true;
+            }
+            update() {
+                if (!this.active) return;
+
+                if (Input.keys['KeyA'] && this.player.x > 0) this.player.x -= 5;
+                if (Input.keys['KeyD'] && this.player.x < 750) this.player.x += 5;
+
+                if (Input.keys['Space'] && this.fireCooldown <= 0) {
+                    this.bullets.push({x: this.player.x + 20, y: this.player.y, w: 10, h: 20});
+                    this.fireCooldown = 20;
+                }
+                if (this.fireCooldown > 0) this.fireCooldown--;
+
+                this.bullets.forEach(b => b.y -= 10);
+                this.bullets = this.bullets.filter(b => b.y > 0);
+
+                let hitEdge = false;
+                this.aliens.forEach(a => {
+                    if (!a.active) return;
+                    a.x += this.alienDir;
+                    if (a.x > 760 || a.x < 10) hitEdge = true;
+                    
+                    this.bullets.forEach(b => {
+                        if (b.x < a.x+a.w && b.x+b.w > a.x && b.y < a.y+a.h && b.y+b.h > a.y) {
+                            a.active = false; b.y = -100;
+                        }
+                    });
+                });
+
+                if (hitEdge) {
+                    this.alienDir *= -1;
+                    this.aliens.forEach(a => a.y += 20);
+                }
+
+                if (this.aliens.every(a => !a.active)) {
+                    this.active = false;
+                    this.onWin();
+                }
+
+                // Render
+                this.ctx.fillStyle = '#000'; this.ctx.fillRect(0,0,800,600);
+                this.ctx.fillStyle = '#00ff66'; this.ctx.shadowBlur = 10; this.ctx.shadowColor = '#00ff66';
+                
+                this.ctx.fillRect(this.player.x, this.player.y, this.player.w, this.player.h);
+                this.ctx.fillRect(this.player.x + 20, this.player.y - 10, 10, 10); // Cañón
+                
+                this.bullets.forEach(b => this.ctx.fillRect(b.x, b.y, b.w, b.h));
+                
+                this.aliens.forEach(a => {
+                    if (a.active) this.ctx.fillRect(a.x, a.y, a.w, a.h);
+                });
+                this.ctx.shadowBlur = 0;
+            }
+        }
+
+        // --- GESTOR PRINCIPAL ---
+        class GameManager {
+            constructor() {
+                this.states = ['cinematic', 'title', 'map', 'pong', 'dash', 'invaders'];
+                
+                this.cinematic = new Cinematic(document.getElementById('canvas-cinematic'), () => this.switchState('title'));
+                this.map = new OverworldMap(document.getElementById('canvas-map'), this);
+                this.pong = new PongGame(document.getElementById('canvas-pong'), () => this.triggerMemory('PONG', 'Año: 1972 | Atari', 'El primer éxito comercial que inició la industria.', 'dash'));
+                this.dash = new ChronosDash(document.getElementById('canvas-dash'), () => {
+                    this.map.unlockNode('invaders');
+                    this.map.player.targetId = 'invaders';
+                    this.switchState('map');
+                });
+                this.invaders = new SpaceInvaders(document.getElementById('canvas-invaders'), () => this.triggerMemory('SPACE INVADERS', 'Año: 1978 | Taito', 'Introdujo el concepto de puntaje alto y curva de dificultad creciente.', 'map'));
+
+                document.getElementById('btn-start').onclick = () => {
+                    document.getElementById('hud').style.display = 'block';
+                    this.switchState('map');
+                };
+
+                // Tecla para interactuar en el mapa
+                window.addEventListener('keydown', (e) => {
+                    if (e.code === 'Enter' && this.currentState === 'map') {
+                        const target = this.map.player.targetId;
+                        if (target === 'pong') this.switchState('pong');
+                        else if (target === 'dash') this.switchState('dash');
+                        else if (target === 'invaders') this.switchState('invaders');
+                    }
+                });
+
+                document.getElementById('btn-close-memory').onclick = () => {
+                    document.getElementById('memory-restored').style.display = 'none';
+                    if (this.nextStateAfterMemory === 'dash') {
+                        // Vuelo de paleta simulado (volvemos al mapa, desbloqueamos ruta)
+                        this.map.unlockNode('dash');
+                        this.map.player.targetId = 'dash';
+                    }
+                    this.switchState('map');
+                };
+
+                this.switchState('cinematic');
+                this.loop = this.loop.bind(this);
+                requestAnimationFrame(this.loop);
+            }
+
+            switchState(stateName) {
+                this.states.forEach(s => document.getElementById(`state-${s}`).classList.remove('active'));
+                document.getElementById(`state-${stateName}`).classList.add('active');
+                this.currentState = stateName;
+                
+                if (stateName === 'pong') this.pong.reset();
+                if (stateName === 'dash') this.dash.reset();
+                if (stateName === 'invaders') this.invaders.reset();
+
+                document.getElementById('hud-zone').innerText = stateName === 'map' ? 'ZONA: ARCHIPIÉLAGO CERO [ENTER: ACCEDER]' : 
+                                                               stateName === 'dash' ? 'ZONA: EL SENDERO DEL GLITCH' : 'ZONA: MINIJUEGO HISTÓRICO';
+            }
+
+            triggerMemory(game, year, fact, nextMapTarget) {
+                document.getElementById('mem-game').innerText = game;
+                document.getElementById('mem-year').innerText = year;
+                document.getElementById('mem-fact').innerText = "Dato: " + fact;
+                document.getElementById('memory-restored').style.display = 'flex';
+                this.nextStateAfterMemory = nextMapTarget;
+            }
+
+            loop() {
+                if (this.currentState === 'cinematic') this.cinematic.update();
+                if (this.currentState === 'map') this.map.update();
+                if (this.currentState === 'pong') this.pong.update();
+                if (this.currentState === 'dash') this.dash.update();
+                if (this.currentState === 'invaders') this.invaders.update();
+                requestAnimationFrame(this.loop);
+            }
+        }
+
+        window.onload = () => new GameManager();
+    </script>
+</body>
+</html>
