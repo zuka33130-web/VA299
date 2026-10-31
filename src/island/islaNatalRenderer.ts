@@ -3868,7 +3868,9 @@ export interface IslaNatalCabinRenderParams {
   chestOpened: boolean;
   /** La radio de la mesa está encendida y suena durante la intro. */
   radioOn?: boolean;
-  /** Tormenta del aviso: el cielo se parte mientras Pixel está adentro. */
+  /** Interferencia y estática que interrumpen la transmisión de la radio. */
+  radioStatic?: { t: number } | null;
+  /** Tormenta y anomalías del Reinicio Cero mientras Pixel está adentro. */
   storm?: { t: number } | null;
 }
 
@@ -4918,6 +4920,60 @@ function drawCabinRadioLive(
   ctx.restore();
 }
 
+/** Interferencia y estática en la radio antes de que se corte la transmisión. */
+function drawCabinRadioStatic(
+  ctx: CanvasRenderingContext2D,
+  staticElapsed: number,
+  elapsed: number,
+  reducedMotion: boolean
+): void {
+  const rx = 363;
+  const ry = 149;
+  const cutProgress = Math.min(1, staticElapsed / 2.6);
+  const alive = cutProgress < 0.88;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+
+  if (alive) {
+    const jitter = reducedMotion ? 0.6 : Math.abs(Math.sin(elapsed * 31.7 + staticElapsed * 19));
+    const glow = ctx.createRadialGradient(rx, ry, 1, rx, ry, 28);
+    glow.addColorStop(0, `rgba(103, 232, 249, ${(0.36 * jitter).toFixed(3)})`);
+    glow.addColorStop(0.55, `rgba(244, 63, 94, ${(0.22 * (1 - jitter)).toFixed(3)})`);
+    glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(rx - 30, ry - 26, 60, 52);
+
+    // Arcos quebrados de estática y chispas de señal interrumpida.
+    for (let i = 0; i < 4; i++) {
+      const seed = hash2(Math.floor(elapsed * 24) + i * 13, i * 7);
+      if (seed < 0.25) continue;
+      ctx.strokeStyle = i % 2 === 0 ? 'rgba(103, 232, 249, 0.72)' : 'rgba(251, 113, 133, 0.65)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const baseX = rx + 4 + (seed - 0.5) * 14;
+      const baseY = ry - 4 + ((i % 3) - 1) * 5;
+      ctx.moveTo(baseX, baseY);
+      ctx.lineTo(baseX + 5 - (i % 2) * 9, baseY - 5);
+      ctx.lineTo(baseX + 9 - (i % 2) * 14, baseY - 2);
+      ctx.lineTo(baseX + 13 - (i % 2) * 18, baseY - 9);
+      ctx.stroke();
+    }
+
+    // Dial parpadeante antes del apagón definitivo.
+    if (Math.floor(elapsed * 18) % 3 !== 0) {
+      ctx.fillStyle = Math.floor(elapsed * 22) % 2 === 0 ? '#67e8f9' : '#fda4af';
+      ctx.fillRect(rx - 6, ry - 2, 4, 2);
+    }
+  } else {
+    // Última chispa al cortarse por completo la emisora.
+    const fade = Math.max(0, 1 - (cutProgress - 0.88) / 0.12);
+    ctx.fillStyle = `rgba(226, 232, 240, ${(0.5 * fade).toFixed(3)})`;
+    ctx.fillRect(rx - 5, ry - 2, 3, 2);
+  }
+
+  ctx.restore();
+}
+
 export function renderIslaNatalCabin(params: IslaNatalCabinRenderParams): void {
   const { ctx, vw, vh, camera, elapsed, reducedMotion } = params;
   ctx.imageSmoothingEnabled = false;
@@ -4930,6 +4986,9 @@ export function renderIslaNatalCabin(params: IslaNatalCabinRenderParams): void {
   drawCabinFurniture(ctx, elapsed, reducedMotion);
   drawCabinChest(ctx, params.chestOpened, elapsed, reducedMotion);
   if (params.radioOn) drawCabinRadioLive(ctx, elapsed, reducedMotion);
+  if (params.radioStatic) {
+    drawCabinRadioStatic(ctx, params.radioStatic.t, elapsed, reducedMotion);
+  }
   if (params.backpackOnHook) drawCabinBackpack(ctx, elapsed, reducedMotion);
   drawPlayer(ctx, params, elapsed);
   if (params.prompt) {
@@ -4951,48 +5010,187 @@ export function renderIslaNatalCabin(params: IslaNatalCabinRenderParams): void {
   ctx.fillStyle = grade;
   ctx.fillRect(0, 0, vw, vh);
 
-  // Tormenta del aviso: la sala se oscurece y la ventana devuelve destellos.
+  // Parpadeo sutil de la lámpara durante la interferencia de la radio.
+  if (params.radioStatic && !reducedMotion) {
+    const flickerCut = Math.sin(elapsed * 29) > 0.55 ? 0.18 : 0.04;
+    ctx.fillStyle = `rgba(8, 12, 24, ${flickerCut.toFixed(3)})`;
+    ctx.fillRect(0, 0, vw, vh);
+  }
+
+  // Secuencia cinematográfica de rayos, tormenta y acontecimientos extraños del Reinicio Cero.
   if (params.storm) {
     const st = params.storm.t;
-    const dark = Math.min(0.46, 0.1 + st * 0.14);
-    ctx.fillStyle = `rgba(9, 15, 28, ${dark.toFixed(3)})`;
+    const dark = Math.min(0.58, 0.16 + Math.min(1, st / 1.4) * 0.36);
+    ctx.fillStyle = `rgba(7, 11, 24, ${dark.toFixed(3)})`;
     ctx.fillRect(0, 0, vw, vh);
+
+    const wx0 = 94 - Math.round(camera.x);
+    const wy0 = 26 - Math.round(camera.y);
+    const ww = 84;
+    const wh = 60;
+
+    // Cielo tormentoso y grieta dimensional del Reinicio Cero tras los cristales de la ventana.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(wx0, wy0, ww, wh);
+    ctx.clip();
+
+    const stormSky = ctx.createLinearGradient(0, wy0, 0, wy0 + wh);
+    const anomalyPhase = Math.max(0, Math.min(1, (st - 1.7) / 2.2));
+    stormSky.addColorStop(0, anomalyPhase > 0.2 ? '#1e0b2e' : '#091122');
+    stormSky.addColorStop(0.58, anomalyPhase > 0.2 ? '#3b0f36' : '#13223b');
+    stormSky.addColorStop(1, '#091829');
+    ctx.fillStyle = stormSky;
+    ctx.fillRect(wx0, wy0, ww, wh);
+
+    // Lluvia diagonal azotando el cristal.
+    if (!reducedMotion) {
+      ctx.strokeStyle = 'rgba(186, 230, 253, 0.38)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 14; i++) {
+        const rx = wx0 + ((i * 19 + Math.floor(elapsed * 130)) % (ww + 18)) - 8;
+        const ry = wy0 + ((i * 23 + Math.floor(elapsed * 190)) % (wh + 12)) - 6;
+        ctx.beginPath();
+        ctx.moveTo(rx, ry);
+        ctx.lineTo(rx - 5, ry + 11);
+        ctx.stroke();
+      }
+    }
+
+    // Grieta carmesí/cian del Reinicio Cero abriéndose sobre el horizonte exterior.
+    if (anomalyPhase > 0.04) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const riftGlow = ctx.createRadialGradient(
+        wx0 + 46,
+        wy0 + 22,
+        2,
+        wx0 + 46,
+        wy0 + 22,
+        44
+      );
+      riftGlow.addColorStop(0, `rgba(244, 63, 94, ${(0.72 * anomalyPhase).toFixed(3)})`);
+      riftGlow.addColorStop(0.5, `rgba(168, 85, 247, ${(0.45 * anomalyPhase).toFixed(3)})`);
+      riftGlow.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.fillStyle = riftGlow;
+      ctx.fillRect(wx0, wy0, ww, wh);
+
+      ctx.strokeStyle = `rgba(254, 205, 211, ${(0.85 * anomalyPhase).toFixed(3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(wx0 + 16, wy0 + 14);
+      ctx.lineTo(wx0 + 34, wy0 + 20);
+      ctx.lineTo(wx0 + 48, wy0 + 16);
+      ctx.lineTo(wx0 + 68, wy0 + 26);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Rejilla de madera de la ventana sobre el cristal tormentoso.
+    ctx.fillStyle = '#24140b';
+    ctx.fillRect(wx0 + ww / 2 - 1, wy0, 2, wh);
+    ctx.fillRect(wx0, wy0 + wh / 2 - 1, ww, 2);
+    ctx.restore();
+
+    // Acontecimientos extraños en el interior: motas antigravitatorias y pulso cromático del Reinicio Cero.
+    if (anomalyPhase > 0.08) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const roomRift = ctx.createRadialGradient(
+        wx0 + 42,
+        wy0 + 30,
+        6,
+        wx0 + 42,
+        wy0 + 30,
+        260
+      );
+      roomRift.addColorStop(0, `rgba(244, 63, 94, ${(0.24 * anomalyPhase).toFixed(3)})`);
+      roomRift.addColorStop(0.48, `rgba(56, 189, 248, ${(0.14 * anomalyPhase).toFixed(3)})`);
+      roomRift.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = roomRift;
+      ctx.fillRect(0, 0, vw, vh);
+
+      if (!reducedMotion) {
+        for (let i = 0; i < 18; i++) {
+          const seedX = hash2(i * 17, 5);
+          const seedY = hash2(i * 29, 11);
+          const mx = Math.round(seedX * vw);
+          const lift = ((elapsed * 36 + seedY * vh) % vh);
+          const my = Math.round(vh - lift);
+          ctx.fillStyle =
+            i % 3 === 0
+              ? `rgba(103, 232, 249, ${(0.52 * anomalyPhase).toFixed(3)})`
+              : i % 3 === 1
+                ? `rgba(244, 114, 182, ${(0.46 * anomalyPhase).toFixed(3)})`
+                : `rgba(253, 224, 71, ${(0.4 * anomalyPhase).toFixed(3)})`;
+          ctx.fillRect(mx, my, i % 4 === 0 ? 3 : 2, i % 4 === 0 ? 3 : 2);
+        }
+
+        for (let b = 0; b < 4; b++) {
+          const bandSeed = hash2(Math.floor(elapsed * 14) + b * 23, b);
+          if (bandSeed < 0.52) continue;
+          const by = Math.round(bandSeed * vh);
+          ctx.fillStyle =
+            b % 2 === 0
+              ? `rgba(103, 232, 249, ${(0.16 * anomalyPhase).toFixed(3)})`
+              : `rgba(244, 63, 94, ${(0.14 * anomalyPhase).toFixed(3)})`;
+          ctx.fillRect(0, by, vw, 2 + (b % 2));
+        }
+      }
+      ctx.restore();
+    }
 
     const gaussian = (center: number, spread: number) => {
       const d = (st - center) / spread;
       return Math.exp(-d * d);
     };
     const flash = Math.max(
-      gaussian(0.3, 0.1),
-      gaussian(1.15, 0.13),
-      gaussian(2.25, 0.15),
-      gaussian(3.0, 0.12)
+      gaussian(0.32, 0.1),
+      gaussian(1.35, 0.13),
+      gaussian(2.65, 0.15),
+      gaussian(3.85, 0.14),
+      gaussian(5.1, 0.16)
     );
     if (flash > 0.01) {
-      // Luz fría que entra por la ventana y trepa por la pared.
+      // Luz eléctrica que entra por la ventana y recorre toda la habitación.
       const wx = 136 - Math.round(camera.x);
       const wy = 56 - Math.round(camera.y);
-      const beam = ctx.createRadialGradient(wx, wy, 6, wx, wy, 300);
-      beam.addColorStop(0, `rgba(196, 238, 255, ${(flash * 0.66).toFixed(3)})`);
-      beam.addColorStop(0.42, `rgba(140, 200, 245, ${(flash * 0.3).toFixed(3)})`);
+      const crimsonTint = st > 2.2;
+      const beam = ctx.createRadialGradient(wx, wy, 6, wx, wy, 320);
+      beam.addColorStop(
+        0,
+        crimsonTint
+          ? `rgba(255, 210, 235, ${(flash * 0.72).toFixed(3)})`
+          : `rgba(196, 238, 255, ${(flash * 0.68).toFixed(3)})`
+      );
+      beam.addColorStop(
+        0.42,
+        crimsonTint
+          ? `rgba(244, 114, 182, ${(flash * 0.32).toFixed(3)})`
+          : `rgba(140, 200, 245, ${(flash * 0.3).toFixed(3)})`
+      );
       beam.addColorStop(1, 'rgba(120, 180, 230, 0)');
       ctx.fillStyle = beam;
       ctx.fillRect(0, 0, vw, vh);
 
-      ctx.fillStyle = `rgba(226, 245, 255, ${(flash * 0.3).toFixed(3)})`;
+      ctx.fillStyle = crimsonTint
+        ? `rgba(255, 228, 242, ${(flash * 0.28).toFixed(3)})`
+        : `rgba(226, 245, 255, ${(flash * 0.3).toFixed(3)})`;
       ctx.fillRect(0, 0, vw, vh);
 
-      // El rayo, dibujado dentro del marco de la ventana.
-      const wx0 = 94 - Math.round(camera.x);
-      const wy0 = 26 - Math.round(camera.y);
+      // Rayos bifurcados dibujados dentro del marco de la ventana.
       const strike = Math.max(
-        Math.exp(-Math.pow((st - 0.3) / 0.055, 2)),
-        Math.exp(-Math.pow((st - 2.25) / 0.06, 2))
+        Math.exp(-Math.pow((st - 0.32) / 0.06, 2)),
+        Math.exp(-Math.pow((st - 1.35) / 0.06, 2)),
+        Math.exp(-Math.pow((st - 2.65) / 0.065, 2)),
+        Math.exp(-Math.pow((st - 5.1) / 0.07, 2))
       );
       if (strike > 0.05) {
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
-        ctx.strokeStyle = `rgba(240, 253, 255, ${(strike * 0.95).toFixed(3)})`;
+        ctx.strokeStyle = crimsonTint
+          ? `rgba(255, 240, 248, ${(strike * 0.96).toFixed(3)})`
+          : `rgba(240, 253, 255, ${(strike * 0.95).toFixed(3)})`;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(wx0 + 54, wy0 + 2);
@@ -5002,16 +5200,21 @@ export function renderIslaNatalCabin(params: IslaNatalCabinRenderParams): void {
         ctx.lineTo(wx0 + 48, wy0 + 40);
         ctx.lineTo(wx0 + 36, wy0 + 58);
         ctx.stroke();
-        ctx.strokeStyle = `rgba(150, 226, 255, ${(strike * 0.5).toFixed(3)})`;
+        ctx.strokeStyle = crimsonTint
+          ? `rgba(244, 63, 94, ${(strike * 0.58).toFixed(3)})`
+          : `rgba(150, 226, 255, ${(strike * 0.5).toFixed(3)})`;
         ctx.lineWidth = 5;
         ctx.stroke();
         ctx.restore();
       }
 
-      // Destello cegador del primer impacto: la sala entera se vuelve blanca.
-      const blind = Math.exp(-Math.pow((st - 0.28) / 0.06, 2));
-      if (blind > 0.01) {
-        ctx.fillStyle = `rgba(255, 255, 255, ${(blind * 0.92).toFixed(3)})`;
+      // Destello intenso de impacto.
+      const blind = Math.max(
+        Math.exp(-Math.pow((st - 0.3) / 0.055, 2)),
+        Math.exp(-Math.pow((st - 5.08) / 0.06, 2)) * 0.78
+      );
+      if (blind > 0.01 && !reducedMotion) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${(blind * 0.72).toFixed(3)})`;
         ctx.fillRect(0, 0, vw, vh);
       }
     }

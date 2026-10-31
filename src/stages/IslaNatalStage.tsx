@@ -40,10 +40,12 @@ import {
   ISLA_NATAL_WORLD_H,
   ISLA_NATAL_WORLD_W,
   ISLA_NATAL_ZONES,
+  NATAL_CABIN_RADIO_SILENT_DIALOG,
   NATAL_CHEST_EMPTY_DIALOG,
   NATAL_CHEST_LOCKED_DIALOG,
+  NATAL_CHEST_NEEDS_BACKPACK_DIALOG,
   NATAL_CHEST_REVEAL_DIALOG,
-  NATAL_STORM_QUESTION_DIALOG,
+  NATAL_NO_BACKPACK_EXIT_DIALOG,
   NATAL_TRAVELER_DIALOG,
   PADDLE_DIALOG,
   isCabinInteriorWalkable,
@@ -128,18 +130,19 @@ type NatalPromptKind =
   | 'departure'
   | 'cabin-exit'
   | 'cabin-backpack'
-  | 'cabin-chest';
+  | 'cabin-chest'
+  | 'cabin-radio';
 
 /**
- * Fases de la escena del viajero: la tormenta ocurre con Pixel dentro de la
- * cabaña; al salir llega la nave, el encapuchado baja y habla cara a cara.
- * `question` y `talk` esperan al diálogo.
+ * Fases de la secuencia inicial de Isla Natal:
+ * radio normal en casa → interferencia/estática → tormenta y anomalías del Reinicio Cero →
+ * salida de la casa → llegada del enviado del futuro → diálogo y entrega del código → partida.
  */
 type TravelerPhase =
   | 'none'
   | 'radio'
+  | 'radio-static'
   | 'storm'
-  | 'question'
   | 'exit'
   | 'arrival'
   | 'descend'
@@ -166,6 +169,13 @@ interface NatalDialogModal {
   tone: 'wood' | 'stone' | 'arcane';
   dialog: IslaNatalDialog;
   primary?: NatalDialogAction;
+  lockClose?: boolean;
+}
+
+interface NatalIntroCaption {
+  label: string;
+  text: string;
+  tone: 'radio' | 'static' | 'storm';
 }
 
 function emitParticles(
@@ -401,9 +411,9 @@ export function IslaNatalStage({
   const doorExitTriggeredRef = useRef(false);
   const cabinFadeTimerRef = useRef<number | null>(null);
   const [cabinFade, setCabinFade] = useState(false);
-  /** La tormenta se dispara cuando Pixel ya está adentro de la cabaña. */
+  /** Pixel comienza dentro de su casa en una partida nueva. */
   const [cabinInside, setCabinInside] = useState(introInsideCabinRef.current);
-  const travelerPendingRef = useRef(false);
+  const [introCaption, setIntroCaption] = useState<NatalIntroCaption | null>(null);
   const [zoneBanner, setZoneBanner] = useState<{
     name: string;
     subtitle: string;
@@ -485,6 +495,7 @@ export function IslaNatalStage({
     shirtColor,
     appearance,
     dialogOpen: false,
+    dialogLockClose: false,
     codeOpen: false,
     challengeOpen,
     vistaOpen,
@@ -506,6 +517,7 @@ export function IslaNatalStage({
     shirtColor,
     appearance,
     dialogOpen: dialogModal !== null,
+    dialogLockClose: Boolean(dialogModal?.lockClose),
     codeOpen: chestCodeOpen,
     challengeOpen,
     vistaOpen,
@@ -732,31 +744,37 @@ export function IslaNatalStage({
     player.sprinting = false;
     clickResetRef.current();
     setCabinInside(true);
-    // El aviso del viajero se vive desde adentro: la tormenta golpea la casa.
-    const flags = stageRef.current.flagSet;
-    if (
-      !flags.has(NATAL_FLAGS.travelerWarning) &&
-      !flags.has(NATAL_FLAGS.pongWon) &&
-      !flags.has(NATAL_FLAGS.arcadePowered)
-    ) {
-      travelerPendingRef.current = true;
-    }
     retroAudio.doorTransition();
-    if (!stageRef.current.flagSet.has(NATAL_FLAGS.cabinVisited)) {
+    const flags = stageRef.current.flagSet;
+    if (!flags.has(NATAL_FLAGS.cabinVisited)) {
       markFlag(NATAL_FLAGS.cabinVisited);
       setDialogModal({
         category: 'PRADERA DE CASA · INTERIOR',
         tone: 'wood',
         dialog: CABIN_INTRO_DIALOG,
       });
+    } else if (!flags.has(NATAL_FLAGS.backpack)) {
+      showToast('Tu mochila espera colgada junto a la ventana.');
+    } else if (flags.has(NATAL_FLAGS.travelerWarning) && !flags.has(NATAL_FLAGS.chestOpened)) {
+      showToast(`El cofre del abuelo aguarda bajo el retrato (código ${ISLA_NATAL_CHEST_CODE}).`);
     } else {
-      showToast('La casa sigue tibia: tu mochila espera junto a la ventana.');
+      showToast('El calor del hogar sigue intacto dentro de tu casa.');
     }
   }, [markFlag, showToast]);
 
   const leaveCabin = useCallback(() => {
     const cabin = cabinRef.current;
     if (!cabin.inside) return;
+    const flags = stageRef.current.flagSet;
+    if (!flags.has(NATAL_FLAGS.backpack)) {
+      setDialogModal({
+        category: 'PRADERA DE CASA · UMBRAL BLOQUEADO',
+        tone: 'wood',
+        dialog: NATAL_NO_BACKPACK_EXIT_DIALOG,
+      });
+      retroAudio.npcBlip(0.65);
+      return;
+    }
     cabin.inside = false;
     setCabinInside(false);
     const player = playerRef.current;
@@ -815,11 +833,27 @@ export function IslaNatalStage({
           );
           retroAudio.achievementUnlock();
           setDialogModal(null);
-          showToast('Mochila al hombro · Bitácora, cantimplora, brújula y cuerda.');
+          const flags = stageRef.current.flagSet;
+          if (flags.has(NATAL_FLAGS.travelerWarning) && !flags.has(NATAL_FLAGS.chestOpened)) {
+            showToast(
+              `Mochila recogida · Acercate al cofre del abuelo e introducí el código ${ISLA_NATAL_CHEST_CODE}.`
+            );
+          } else {
+            showToast('Mochila al hombro · Bitácora, cantimplora, brújula y cuerda.');
+          }
         },
       },
     });
   }, [markFlag, showToast]);
+
+  const interactCabinRadio = useCallback(() => {
+    retroAudio.npcBlip(0.78);
+    setDialogModal({
+      category: 'PRADERA DE CASA · MESA DE LECTURA',
+      tone: 'arcane',
+      dialog: NATAL_CABIN_RADIO_SILENT_DIALOG,
+    });
+  }, []);
 
   const interactChest = useCallback(() => {
     const flags = stageRef.current.flagSet;
@@ -831,12 +865,21 @@ export function IslaNatalStage({
       });
       return;
     }
-    // La combinación solo se conoce después de la visita del viajero.
+    // El cofre no puede abrirse antes de la cinemática ni antes de recibir el código del enviado del futuro.
     if (!flags.has(NATAL_FLAGS.travelerWarning)) {
       setDialogModal({
         category: 'PRADERA DE CASA · CERRADURA DE LATÓN',
         tone: 'wood',
         dialog: NATAL_CHEST_LOCKED_DIALOG,
+      });
+      return;
+    }
+    // Paso previo obligatorio dentro de la casa: recoger primero la mochila de Pixel.
+    if (!flags.has(NATAL_FLAGS.backpack)) {
+      setDialogModal({
+        category: 'PRADERA DE CASA · PREPARATIVOS',
+        tone: 'wood',
+        dialog: NATAL_CHEST_NEEDS_BACKPACK_DIALOG,
       });
       return;
     }
@@ -874,12 +917,13 @@ export function IslaNatalStage({
       86,
       42
     );
+    retroAudio.chestOpen();
     retroAudio.achievementUnlock();
     setDialogModal({
       category: 'PRADERA DE CASA · EL COFRE DEL ABUELO',
       tone: 'wood',
       dialog: NATAL_CHEST_REVEAL_DIALOG,
-      primary: { label: 'Guardar la carta', run: () => setDialogModal(null) },
+      primary: { label: 'Guardar la carta y el equipo', run: () => setDialogModal(null) },
     });
   }, [chestCode, markFlag]);
 
@@ -931,11 +975,13 @@ export function IslaNatalStage({
       else if (target.kind === 'paddle') interactPaddle();
       else if (target.kind === 'cabin-backpack') takeCabinBackpack();
       else if (target.kind === 'cabin-chest') interactChest();
+      else if (target.kind === 'cabin-radio') interactCabinRadio();
       else if (target.kind === 'cabin-exit') leaveCabin();
       else interactDeparture();
     },
     [
       interactArcade,
+      interactCabinRadio,
       interactChest,
       interactDeparture,
       interactPaddle,
@@ -998,30 +1044,13 @@ export function IslaNatalStage({
   }, []);
 
   /* -------------------------------------------------------------- */
-  /* LLEGADA                                                         */
+  /* SECUENCIA INICIAL DE ISLA NATAL                                 */
   /* -------------------------------------------------------------- */
 
   const arrivalAnnouncedRef = useRef(flagSet.has(NATAL_FLAGS.firstLight));
-  // El aviso del viajero solo ocurre si el primer Pong sigue pendiente.
-  const travelerWarningPending =
-    !flagSet.has(NATAL_FLAGS.travelerWarning) && !pongWon && !arcadePowered;
-  const travelerStartedRef = useRef(false);
-
-  const startTravelerStorm = useCallback(() => {
-    if (travelerStartedRef.current) return;
-    travelerStartedRef.current = true;
-    travelerPendingRef.current = false;
-    const player = playerRef.current;
-    player.walking = false;
-    player.sprinting = false;
-    clickResetRef.current();
-    setDialogModal(null);
-    travelerStartRef.current = performance.now();
-    setTravelerPhase('storm');
-  }, []);
 
   useEffect(() => {
-    // Partida nueva: la aventura abre con Pixel escuchando la radio en la casa.
+    // Partida nueva: la aventura abre dentro de la casa de Pixel escuchando la radio.
     if (introInsideCabinRef.current) {
       markFlag(NATAL_FLAGS.firstLight);
       markFlag(NATAL_FLAGS.cabinVisited);
@@ -1040,65 +1069,114 @@ export function IslaNatalStage({
     return () => window.clearTimeout(timer);
   }, [markFlag]);
 
-  // La tormenta golpea con Pixel ya adentro de la casa, después del diálogo de entrada.
+  // Secuencia obligatoria:
+  // 1-2. Radio normal en casa → 3. Interferencia y estática → 4. Rayos, tormenta y Reinicio Cero →
+  // 5. Pixel sale de su casa → 6-7. Enviado del futuro pronuncia el diálogo y entrega el código →
+  // 8. El jugador recupera el control afuera.
   useEffect(() => {
-    if (!travelerPendingRef.current || !travelerWarningPending) return;
-    if (!cabinInside || dialogModal !== null) return;
-    if (travelerStartedRef.current) return;
-    const timer = window.setTimeout(startTravelerStorm, 900);
-    return () => window.clearTimeout(timer);
-  }, [cabinInside, dialogModal, travelerWarningPending, startTravelerStorm]);
-
-  // Secuencia: tormenta → pregunta → salida → llegada → descenso → diálogo → partida.
-  useEffect(() => {
-    if (travelerPhase === 'none') return undefined;
+    if (travelerPhase === 'none') {
+      setIntroCaption(null);
+      return undefined;
+    }
     travelerStartRef.current = performance.now();
 
     if (travelerPhase === 'radio') {
-      // La radio de la mesa suena antes del temblor.
+      playerRef.current.facingDir = 'right';
+      setIntroCaption({
+        label: 'RADIO ISLA NATAL · TRANSMISIÓN NORMAL',
+        text: '«…brisa suave del sur y mar en calma sobre todo el archipiélago esta tarde…»',
+        tone: 'radio',
+      });
       retroAudio.radioBroadcast();
-      const done = window.setTimeout(() => setTravelerPhase('storm'), 2900);
-      return () => window.clearTimeout(done);
+      const repeatBroadcast = window.setTimeout(() => {
+        retroAudio.radioBroadcast();
+      }, 2050);
+      const done = window.setTimeout(() => {
+        setTravelerPhase('radio-static');
+      }, 3800);
+      return () => {
+        window.clearTimeout(repeatBroadcast);
+        window.clearTimeout(done);
+      };
+    }
+
+    if (travelerPhase === 'radio-static') {
+      playerRef.current.facingDir = 'right';
+      setIntroCaption({
+        label: 'INTERFERENCIA Y ESTÁTICA',
+        text: '«…esperen… una anomalía masiva invade todas las frecuen— [KRRZZT—ESTÁTICA]» · La transmisión se interrumpe.',
+        tone: 'static',
+      });
+      retroAudio.radioInterference(false);
+      emitParticles(particlesRef.current, 363, 149, 18, '#67e8f9', 36, 16);
+      const cutBurst = window.setTimeout(() => {
+        retroAudio.radioInterference(true);
+        emitParticles(particlesRef.current, 363, 149, 26, '#fb7185', 42, 20);
+      }, 1300);
+      const done = window.setTimeout(() => {
+        setTravelerPhase('storm');
+      }, 2800);
+      return () => {
+        window.clearTimeout(cutBurst);
+        window.clearTimeout(done);
+      };
     }
 
     if (travelerPhase === 'storm') {
+      playerRef.current.facingDir = 'left';
+      setIntroCaption({
+        label: 'TORMENTA · ANUNCIO DEL REINICIO CERO',
+        text: 'Rayos y una tormenta repentina golpean la casa mientras fenómenos extraños tiñen el cielo…',
+        tone: 'storm',
+      });
       retroAudio.thunderRoll();
       retroAudio.flashBurst();
       window.dispatchEvent(new CustomEvent('pixelverse-shake'));
+
       const secondFlash = window.setTimeout(() => {
         retroAudio.thunderRoll();
         retroAudio.flashBurst();
         window.dispatchEvent(new CustomEvent('pixelverse-shake'));
-      }, 1150);
+      }, 1350);
+
+      const anomalyWave = window.setTimeout(() => {
+        retroAudio.reinicioCeroStormAnomaly();
+        window.dispatchEvent(new CustomEvent('pixelverse-shake'));
+        setIntroCaption({
+          label: 'ACONTECIMIENTOS EXTRAÑOS · EL REINICIO CERO',
+          text: 'Una grieta carmesí rasga las nubes sobre la isla y el aire entero vibra fuera del tiempo…',
+          tone: 'storm',
+        });
+      }, 2450);
+
       const thirdFlash = window.setTimeout(() => {
         retroAudio.flashBurst();
+      }, 3850);
+
+      const finalStrike = window.setTimeout(() => {
+        retroAudio.thunderRoll();
+        retroAudio.flashBurst();
         window.dispatchEvent(new CustomEvent('pixelverse-shake'));
-      }, 2250);
+        playerRef.current.facingDir = 'down';
+      }, 5050);
+
       const done = window.setTimeout(() => {
-        setDialogModal({
-          category: 'ISLA NATAL · LA TORMENTA',
-          tone: 'wood',
-          dialog: NATAL_STORM_QUESTION_DIALOG,
-          primary: {
-            label: 'Salir a revisar',
-            run: () => {
-              setDialogModal(null);
-              setTravelerPhase('exit');
-            },
-          },
-        });
-        setTravelerPhase('question');
-      }, 3400);
+        setIntroCaption(null);
+        setTravelerPhase('exit');
+      }, 6200);
+
       return () => {
         window.clearTimeout(secondFlash);
+        window.clearTimeout(anomalyWave);
         window.clearTimeout(thirdFlash);
+        window.clearTimeout(finalStrike);
         window.clearTimeout(done);
       };
     }
 
     if (travelerPhase === 'exit') {
-      // Pixel camina hasta la puerta; el bucle mueve el sprite y el cruce se
-      // resuelve con un fundido, no con un cambio instantáneo de escena.
+      setIntroCaption(null);
+      // Finalizada la animación de la tormenta, Pixel camina hasta la puerta y sale de su casa.
       exitWalkRef.current = {
         x: ISLA_NATAL_CABIN.door.x,
         y: ISLA_NATAL_CABIN.door.y - 6,
@@ -1112,6 +1190,7 @@ export function IslaNatalStage({
     }
 
     if (travelerPhase === 'arrival') {
+      setIntroCaption(null);
       retroAudio.timeMachineWarp();
       window.dispatchEvent(new CustomEvent('pixelverse-shake'));
       const done = window.setTimeout(() => {
@@ -1141,12 +1220,19 @@ export function IslaNatalStage({
     if (travelerPhase === 'descend') {
       const done = window.setTimeout(() => {
         setDialogModal({
-          category: 'ISLA NATAL · EL VIAJERO',
+          category: 'ISLA NATAL · ENVIADO DEL FUTURO',
           tone: 'arcane',
           dialog: NATAL_TRAVELER_DIALOG,
+          lockClose: true,
           primary: {
-            label: 'Verlo partir',
+            label: `Recibir código (${ISLA_NATAL_CHEST_CODE})`,
             run: () => {
+              markFlag(NATAL_FLAGS.travelerWarning);
+              grantInventoryRef.current(['item-nota-codigo-cofre']);
+              retroAudio.echoDiscover();
+              showToast(
+                `Código del cofre recibido: ${ISLA_NATAL_CHEST_CODE}. Nota de código agregada al inventario.`
+              );
               setDialogModal(null);
               setTravelerPhase('board');
             },
@@ -1158,6 +1244,7 @@ export function IslaNatalStage({
     }
 
     if (travelerPhase === 'board') {
+      markFlag(NATAL_FLAGS.travelerWarning);
       const done = window.setTimeout(() => setTravelerPhase('departure'), 1500);
       return () => window.clearTimeout(done);
     }
@@ -1182,13 +1269,11 @@ export function IslaNatalStage({
     }
 
     return undefined;
-  }, [travelerPhase, markFlag, leaveCabin]);
+  }, [travelerPhase, markFlag, leaveCabin, showToast]);
 
-  // Si el diálogo se cierra sin usar su acción principal, la escena avanza igual.
+  // Si el diálogo del enviado del futuro concluye, la escena continúa con la partida.
   useEffect(() => {
-    if (travelerPhase === 'question' && dialogModal === null) {
-      setTravelerPhase('exit');
-    } else if (travelerPhase === 'talk' && dialogModal === null) {
+    if (travelerPhase === 'talk' && dialogModal === null) {
       setTravelerPhase('board');
     }
   }, [travelerPhase, dialogModal]);
@@ -1302,6 +1387,7 @@ export function IslaNatalStage({
       if (stage.codeOpen) return;
       if (
         travelerPhaseRef.current === 'radio' ||
+        travelerPhaseRef.current === 'radio-static' ||
         travelerPhaseRef.current === 'storm' ||
         travelerPhaseRef.current === 'exit' ||
         travelerPhaseRef.current === 'arrival' ||
@@ -1335,7 +1421,7 @@ export function IslaNatalStage({
         ) {
           event.preventDefault();
           if (!event.repeat) advanceDialogueRef.current();
-        } else if (isActionPressed(event, 'cancel', keybindings)) {
+        } else if (!stage.dialogLockClose && isActionPressed(event, 'cancel', keybindings)) {
           event.preventDefault();
           if (!event.repeat) {
             setDialogModal(null);
@@ -1777,6 +1863,17 @@ export function IslaNatalStage({
             },
             ISLA_NATAL_CABIN.chest.radius
           );
+          consider(
+            {
+              kind: 'cabin-radio',
+              id: 'cabin-radio',
+              label: 'Examinar la radio',
+              accentHex: '#67e8f9',
+              x: ISLA_NATAL_CABIN.radio.x,
+              y: ISLA_NATAL_CABIN.radio.y,
+            },
+            ISLA_NATAL_CABIN.radio.radius
+          );
         } else {
           for (const poi of ISLA_NATAL_POIS) {
             consider(
@@ -1829,10 +1926,10 @@ export function IslaNatalStage({
         ctx.save();
         ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
         if (cabinRef.current.inside) {
-          const stormNow =
-            travelerPhaseRef.current === 'storm'
-              ? { t: Math.max(0, (now - travelerStartRef.current) / 1000) }
-              : null;
+          const phaseNow = travelerPhaseRef.current;
+          const phaseElapsed = Math.max(0, (now - travelerStartRef.current) / 1000);
+          const stormNow = phaseNow === 'storm' ? { t: phaseElapsed } : null;
+          const radioStaticNow = phaseNow === 'radio-static' ? { t: phaseElapsed } : null;
           renderIslaNatalCabin({
             ctx,
             vw: viewW(),
@@ -1848,7 +1945,8 @@ export function IslaNatalStage({
             prompt: promptSpec,
             backpackOnHook: !stage.flagSet.has(NATAL_FLAGS.backpack),
             chestOpened: stage.chestOpened,
-            radioOn: travelerPhaseRef.current === 'radio',
+            radioOn: phaseNow === 'radio',
+            radioStatic: radioStaticNow,
             storm: stormNow,
           });
         } else {
@@ -1960,6 +2058,36 @@ export function IslaNatalStage({
         </div>
       )}
 
+      {/* Subtítulo cinematográfico integrado para la secuencia inicial en la casa */}
+      {introCaption && !dialogModal && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-[7%] z-30 flex justify-center px-4">
+          <div
+            className={`glass-hud max-w-xl px-5 py-3 text-center border ${
+              introCaption.tone === 'radio'
+                ? 'border-amber-300/45'
+                : introCaption.tone === 'static'
+                  ? 'border-cyan-300/55'
+                  : 'border-rose-400/55'
+            }`}
+          >
+            <p
+              className={`font-mono text-[10px] font-bold tracking-[0.22em] uppercase ${
+                introCaption.tone === 'radio'
+                  ? 'text-amber-200'
+                  : introCaption.tone === 'static'
+                    ? 'text-cyan-200'
+                    : 'text-rose-200'
+              }`}
+            >
+              {introCaption.label}
+            </p>
+            <p className="mt-1 font-mono text-xs sm:text-sm leading-relaxed text-slate-100">
+              {introCaption.text}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Aviso flotante */}
       {toast && (
         <div className="pointer-events-none absolute inset-x-0 bottom-[13%] z-20 flex justify-center px-4">
@@ -2032,14 +2160,16 @@ export function IslaNatalStage({
                   </p>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => setDialogModal(null)}
-                aria-label="Cerrar diálogo"
-                className="text-white hover:text-amber-300 cursor-pointer p-1 font-mono font-bold"
-              >
-                [X]
-              </button>
+              {!dialogModal.lockClose && (
+                <button
+                  type="button"
+                  onClick={() => setDialogModal(null)}
+                  aria-label="Cerrar diálogo"
+                  className="text-white hover:text-amber-300 cursor-pointer p-1 font-mono font-bold"
+                >
+                  [X]
+                </button>
+              )}
             </div>
 
             <div
@@ -2080,7 +2210,7 @@ export function IslaNatalStage({
         </div>
       )}
 
-      {/* Cerradura del cofre: la combinación que entregó el viajero */}
+      {/* Cerradura del cofre: la combinación que entregó el enviado del futuro */}
       {chestCodeOpen && (
         <div className="dialogue-backdrop fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5">
           <form
@@ -2099,7 +2229,7 @@ export function IslaNatalStage({
                   El cofre del abuelo
                 </h3>
                 <p className="text-[11px] font-mono text-[#7dd3fc] mt-1">
-                  Cuatro discos numerados
+                  Cuatro discos numerados · Código recibido: {ISLA_NATAL_CHEST_CODE}
                 </p>
               </div>
               <button
@@ -2113,8 +2243,8 @@ export function IslaNatalStage({
             </div>
 
             <p className="text-xs sm:text-sm font-mono leading-relaxed text-amber-100/90">
-              Los discos giran con un chasquido seco. La carta del abuelo guarda la combinación;
-              escríbela tal como él la dejó.
+              Los discos giran con un chasquido seco. Introducí el código que te entregó el enviado
+              del futuro ({ISLA_NATAL_CHEST_CODE}) para abrir el cofre de tu abuelo.
             </p>
 
             <label className="block">

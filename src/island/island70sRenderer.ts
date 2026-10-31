@@ -9047,22 +9047,6 @@ export function renderIsland70sFrame(params: IslandRenderFrameParams): void {
     });
   }
 
-  // Terminal de Conducción Night Driver (1976) en la Costa Oriental
-  const ndPos = ISLAND_KEY_COORDS.nightDriverTerminal;
-  if (isWorldBoxVisible(ndPos.x - 40, ndPos.y - 70, 80, 90, camX, camY, vw, vh)) {
-    ySortedDrawables.push({
-      sortY: ndPos.y,
-      draw: () =>
-        drawNightDriverArcadeTerminal(
-          ctx,
-          ndPos.x,
-          ndPos.y,
-          elapsed,
-          Boolean(progressState.games['night-driver']?.memoryUnlocked) || allUnlocked
-        ),
-    });
-  }
-
   const volcanicArcades: { id: 'asteroids' | 'breakout'; x: number; y: number; restored: boolean }[] = [
     { id: 'asteroids', ...VOLCANIC_ARCADE_LAYOUT.asteroids, restored: Boolean(progressState.games['asteroids']?.memoryUnlocked) || allUnlocked },
     { id: 'breakout', ...VOLCANIC_ARCADE_LAYOUT.breakout, restored: Boolean(progressState.games['breakout']?.memoryUnlocked) || allUnlocked },
@@ -9088,31 +9072,6 @@ export function renderIsland70sFrame(params: IslandRenderFrameParams): void {
     ySortedDrawables.push({
       sortY: VOLCANIC_ARCADE_LAYOUT.guard.y,
       draw: () => drawVolcanicGuard(ctx, VOLCANIC_ARCADE_LAYOUT.guard.x, VOLCANIC_ARCADE_LAYOUT.guard.y, elapsed, guardApproved),
-    });
-  }
-
-  if (
-    isWorldBoxVisible(
-      ISLAND_KEY_COORDS.pongCabinet.x - 75,
-      ISLAND_KEY_COORDS.pongCabinet.y - 80,
-      150,
-      120,
-      camX,
-      camY,
-      vw,
-      vh
-    )
-  ) {
-    ySortedDrawables.push({
-      sortY: ISLAND_KEY_COORDS.pongCabinet.y,
-      draw: () =>
-        drawPong1972CabinetWorld(
-          ctx,
-          ISLAND_KEY_COORDS.pongCabinet.x,
-          ISLAND_KEY_COORDS.pongCabinet.y,
-          pongRestored,
-          elapsed
-        ),
     });
   }
 

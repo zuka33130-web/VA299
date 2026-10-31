@@ -3251,6 +3251,82 @@ export function renderSubAreaFrame(params: SubAreaRenderParams): void {
       ctx.fillRect(cx - 6 + Math.round(bx * 0.5), cy - 22, 12, 2);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(cx + bx - 1, cy - 28, 3, 3);
+    } else if (prop.kind === 'night-driver-cabinet-1976') {
+      const ndDone =
+        allUnlocked || Boolean(progressState.games['night-driver']?.memoryUnlocked);
+      const cx = prop.x + prop.w / 2;
+      const cy = prop.y + prop.h;
+
+      // Pedestal de roca húmeda y halo de resonancia bajo el gabinete oculto
+      ctx.fillStyle = '#110d24';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy - 3, 36, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = ndDone ? '#39ff14' : '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Carcasa upright Atari Night Driver (1976) negra con molduras laterales celestes
+      ctx.fillStyle = '#050811';
+      ctx.fillRect(cx - 24, cy - 68, 48, 66);
+      ctx.fillStyle = '#0284c7';
+      ctx.fillRect(cx - 23, cy - 67, 4, 63);
+      ctx.fillRect(cx + 19, cy - 67, 4, 63);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(cx - 19, cy - 66, 38, 62);
+
+      // Marquesina superior retroiluminada
+      ctx.fillStyle = ndDone ? '#dcfce7' : '#e0f2fe';
+      ctx.fillRect(cx - 18, cy - 64, 36, 9);
+      ctx.fillStyle = '#0369a1';
+      ctx.fillRect(cx - 18, cy - 64, 36, 2);
+      ctx.fillStyle = '#090d16';
+      ctx.font = '700 5px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('NIGHT DRIVER', cx, cy - 57);
+
+      // Pantalla CRT monocroma con postes reflectantes en perspectiva y silueta de coche
+      ctx.fillStyle = '#02040a';
+      ctx.fillRect(cx - 16, cy - 53, 32, 24);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(cx - 16, cy - 53, 32, 24);
+
+      const roadSway = Math.sin(elapsed * 2.8) * 3.5;
+      for (let row = 0; row < 4; row++) {
+        const t = ((row / 4 + elapsed * 1.6) % 1);
+        const py = cy - 49 + t * 15;
+        const spread = 3 + t * 10;
+        const curveShift = (1 - t) * roadSway;
+        const postH = Math.max(1.5, 1 + t * 2.5);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(Math.round(cx + curveShift - spread), Math.round(py), 2, Math.round(postH));
+        ctx.fillRect(Math.round(cx + curveShift + spread - 1), Math.round(py), 2, Math.round(postH));
+      }
+      // Silueta del morro impreso sobre el bisel inferior del CRT
+      ctx.fillStyle = ndDone ? '#39ff14' : '#38bdf8';
+      ctx.fillRect(cx - 6, cy - 33, 12, 3);
+      ctx.fillRect(cx - 9, cy - 31, 4, 2);
+      ctx.fillRect(cx + 5, cy - 31, 4, 2);
+
+      // Panel de control: volante circular + palanca de 4 marchas + pedal inferior
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(cx - 19, cy - 28, 38, 9);
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.arc(cx - 5, cy - 23, 4.5, 0, Math.PI * 2);
+      ctx.stroke();
+      // Palanca cromada
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(cx + 8, cy - 26, 2, 5);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(cx + 7, cy - 28, 4, 3);
+      // Pedal acelerador en el zócalo inferior
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(cx - 6, cy - 9, 8, 6);
+      ctx.fillStyle = '#64748b';
+      ctx.fillRect(cx - 5, cy - 8, 6, 4);
     } else if (prop.kind === 'vector-projector') {
       const vecSolved =
         allUnlocked ||
@@ -3980,6 +4056,30 @@ export function renderSubAreaFrame(params: SubAreaRenderParams): void {
     darkGrad.addColorStop(1, 'rgba(3, 2, 10, 0.94)');
     ctx.fillStyle = darkGrad;
     ctx.fillRect(0, 0, area.width, area.height);
+
+    // Destello tenue de fósforo CRT del gabinete oculto de Night Driver en la oscuridad
+    for (const prop of area.decorProps) {
+      if (prop.kind !== 'night-driver-cabinet-1976') continue;
+      const cx = prop.x + prop.w / 2;
+      const cy = prop.y + prop.h;
+      const ndDone =
+        allUnlocked || Boolean(progressState.games['night-driver']?.memoryUnlocked);
+      const crtGlow = ctx.createRadialGradient(cx, cy - 42, 4, cx, cy - 42, 54);
+      crtGlow.addColorStop(0, ndDone ? 'rgba(57, 255, 20, 0.28)' : 'rgba(56, 189, 248, 0.30)');
+      crtGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = crtGlow;
+      ctx.beginPath();
+      ctx.arc(cx, cy - 42, 54, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Postes blancos diminutos brillando en la penumbra del tubo CRT
+      const sway = Math.sin(elapsed * 2.8) * 3;
+      ctx.fillStyle = 'rgba(248, 250, 252, 0.78)';
+      ctx.fillRect(Math.round(cx + sway - 8), Math.round(cy - 44), 2, 2);
+      ctx.fillRect(Math.round(cx + sway + 7), Math.round(cy - 44), 2, 2);
+      ctx.fillRect(Math.round(cx + sway * 0.4 - 5), Math.round(cy - 48), 1.5, 1.5);
+      ctx.fillRect(Math.round(cx + sway * 0.4 + 4), Math.round(cy - 48), 1.5, 1.5);
+    }
     ctx.restore();
   }
 
@@ -4014,6 +4114,15 @@ export function renderSubAreaFrame(params: SubAreaRenderParams): void {
       if (Math.hypot(ch.x - player.x, ch.y - player.y) <= radius + 24) {
         ctx.fillStyle = '#39ff14';
         ctx.fillText('◆ COFRE OCULTO', ch.x, ch.y - 26);
+      }
+    }
+    for (const prop of area.decorProps) {
+      if (prop.kind !== 'night-driver-cabinet-1976') continue;
+      const cx = prop.x + prop.w / 2;
+      const cy = prop.y + prop.h;
+      if (Math.hypot(cx - player.x, cy - player.y) <= radius + 24) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText('★ GABINETE OCULTO: NIGHT DRIVER', cx, prop.y - 8);
       }
     }
     ctx.restore();

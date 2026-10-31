@@ -292,6 +292,7 @@ export interface SubAreaSpec {
       | 'labyrinth-wall'
       | 'rgb-frequency-pillar'
       | 'breakout-cabinet-1976'
+      | 'night-driver-cabinet-1976'
       | 'vector-projector'
       | 'castle-throne'
       | 'castle-gear'
@@ -381,6 +382,19 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     usageHint: 'Uno de los tres fragmentos requeridos para la consola central del Núcleo del Origen.',
     usableAction: 'inspect',
   },
+  'item-nucleo-fotonico-nocturno': {
+    id: 'item-nucleo-fotonico-nocturno',
+    name: 'Núcleo Fotónico de Haluro (1976)',
+    category: 'pieza-arcade',
+    categoryLabel: 'ARTEFACTO DE TRAMA · 1976',
+    accentHex: '#38bdf8',
+    shortCode: 'FOT-76',
+    description:
+      'Resonador óptico sellado custodiado en el interior del gabinete de Night Driver (1976), oculto en la cueva oscura debajo de la cascada para escapar del rastreo de Gran Koopa. Canaliza pulsos lumínicos de alta tensión en penumbra absoluta y purga la sobrecarga de entropía que bloquea la Sala de Los Cuatro Caminos.',
+    usageHint:
+      'Entrégaselo al técnico Dylan en Taller RS — Retro State para iniciar la restauración de Los Cuatro Caminos y continuar hacia el Castillo de Gran Koopa.',
+    usableAction: 'inspect',
+  },
   'item-transistores-germanio': {
     id: 'item-transistores-germanio',
     name: '3 Transistores de Germanio (1976)',
@@ -389,8 +403,8 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     accentHex: '#f97316',
     shortCode: 'TR-GERM',
     description:
-      'Conjunto de tres semiconductores de germanio de 1976 en perfecto estado, obtenidos al completar la desafiante carrera nocturna de Night Driver. Componentes indispensables para revivir los circuitos TTL quemados de la Sala de Los Cuatro Caminos.',
-    usageHint: 'Llévaselos al técnico Dylan en Taller RS — Retro State.',
+      'Conjunto de tres semiconductores de germanio de 1976 preservados como respaldo auxiliar para circuitos TTL clásicos.',
+    usageHint: 'Respaldo técnico compatible con el banco de trabajo de Dylan en Taller RS — Retro State.',
     usableAction: 'inspect',
   },
   'item-transistores-germanio-lago': {
@@ -1015,7 +1029,7 @@ export const RPG_QUESTS: RpgQuestSpec[] = [
     decadeTag: 'CRUCE NORTE · LOS CUATRO CAMINOS',
     accentHex: '#38bdf8',
     summary:
-      'Gran Koopa fundió los circuitos de las máquinas en el cruce de Los Cuatro Caminos. Encuentra al técnico Dylan en Taller RS, supera la ruta nocturna de Night Driver para conseguir 3 transistores de germanio, y escolta a Dylan hasta la sala para reactivar los gabinetes y despejar el paso al castillo.',
+      'Gran Koopa fundió los circuitos de las máquinas en el cruce de Los Cuatro Caminos. Habla con el técnico Dylan en Taller RS, adéntrate en la cueva a oscuras debajo de la cascada para superar el gabinete oculto de Night Driver (1976) y obtener el Núcleo Fotónico de Haluro, y escolta a Dylan hasta la sala para reactivar los gabinetes y despejar el paso al castillo.',
     steps: [
       {
         label: 'Hablar con los custodios en el cruce de Los Cuatro Caminos',
@@ -1032,15 +1046,16 @@ export const RPG_QUESTS: RpgQuestSpec[] = [
           Boolean(st.rpg.cuatroCaminosRestored),
       },
       {
-        label: 'Completar Night Driver (1976) y conseguir los 3 Transistores de Germanio',
+        label: 'Entrar en la cueva oscura bajo la cascada y ganar Night Driver (1976) para obtener el Núcleo Fotónico de Haluro',
         isDone: (st, all) =>
           all ||
+          st.rpg.inventoryItems.includes('item-nucleo-fotonico-nocturno') ||
           st.rpg.inventoryItems.includes('item-transistores-germanio') ||
           Boolean(st.rpg.germaniumTransistorsDelivered) ||
           Boolean(st.rpg.cuatroCaminosRestored),
       },
       {
-        label: 'Entregar los transistores a Dylan y escoltarlo hasta Los Cuatro Caminos',
+        label: 'Entregar el Núcleo Fotónico de Haluro a Dylan y escoltarlo hasta Los Cuatro Caminos',
         isDone: (st, all) =>
           all ||
           Boolean(st.rpg.dylanEscortCompleted) ||
@@ -3654,7 +3669,7 @@ export const SUB_AREAS: Record<Exclude<RpgAreaId, 'exterior-70s'>, SubAreaSpec> 
     id: 'cave-gruta-cascada',
     numberLabel: 'CUEVA OCULTA',
     name: 'Gruta Subterránea Tras la Cascada',
-    subtitle: 'Caverna húmeda oculta tras el agua · Enciende la Lámpara [L] para ver tesoros',
+    subtitle: 'Caverna oscura bajo la cascada · Usa la Lámpara [L] para hallar el gabinete oculto de Night Driver (1976)',
     accentHex: '#c084fc',
     floorHex: '#18122b',
     floorGridHex: 'rgba(192, 132, 252, 0.09)',
@@ -3664,7 +3679,10 @@ export const SUB_AREAS: Record<Exclude<RpgAreaId, 'exterior-70s'>, SubAreaSpec> 
     height: 510,
     walkableBounds: { x: 96, y: 118, w: 588, h: 356 },
     isDarkCave: true,
-    obstacles: [{ id: 'cave-pool', x: 350, y: 235, w: 125, h: 72 }],
+    obstacles: [
+      { id: 'cave-pool', x: 350, y: 235, w: 125, h: 72 },
+      { id: 'cave-night-driver-cab', x: 494, y: 136, w: 48, h: 48 },
+    ],
     exits: [
       {
         id: 'exit-cave-waterfall',
@@ -3685,6 +3703,15 @@ export const SUB_AREAS: Record<Exclude<RpgAreaId, 'exterior-70s'>, SubAreaSpec> 
         w: 125,
         h: 72,
         accentHex: '#5cc8ff',
+      },
+      {
+        kind: 'night-driver-cabinet-1976',
+        x: 492,
+        y: 132,
+        w: 52,
+        h: 58,
+        accentHex: '#38bdf8',
+        label: 'NIGHT DRIVER',
       },
       {
         kind: 'cave-crystal',

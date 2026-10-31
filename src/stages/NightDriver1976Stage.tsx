@@ -2,18 +2,20 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * NIGHT DRIVER (1976) — SIMULACIÓN DE CONDUCCIÓN NOCTURNA EN MOTOCICLETA
- * Recreación arcade auténtica inspirada en el pionero de conducción nocturna en primera persona:
- * - Perspectiva 3D con postes reflectantes en curva dinámica
- * - Manillar y tablero de motocicleta con velocímetro, tacómetro y medidor de distancia (2.000 m)
- * - Transmisión manual de 2 velocidades (LOW / HIGH), acelerador, freno y derrape
- * - Obstáculos, vehículos averiados y curvas cerradas telegrafiadas
- * - Verificación rigurosa de victoria al cruzar la meta para obtener los 3 Transistores de Germanio
+ * NIGHT DRIVER (1976) — GABINETE OCULTO EN LA GRUTA TRAS LA CASCADA
+ * Recreación fiel al clásico arcade de Atari (1976) en primera persona nocturna:
+ * - Pantalla CRT negra monocroma donde la ruta solo es visible mediante los postes reflectantes blancos
+ * - Aceleración manteniendo presionada la BARRA ESPACIADORA (como el pedal del gabinete original)
+ * - Integración 3D en perspectiva real de curvas hacia el horizonte + fuerza centrífuga en curvas
+ * - Caja de 4 velocidades (1–4) con asistencia automática y cambio manual opcional [1-4 / ↑↓]
+ * - Silueta retroiluminada clásica del morro del deportivo impresa en la base del monitor CRT
+ * - Al completar la ruta nocturna (2.400 m), libera el «Núcleo Fotónico de Haluro (1976)» para continuar la trama
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Flag, Gauge, ShieldAlert, Sparkles, Trophy, Zap } from 'lucide-react';
+import { ArrowLeft, Flag, Gauge, RotateCcw, Sparkles, Trophy, Volume2 } from 'lucide-react';
 import { retroAudio } from '../audio/retroAudio';
+import { bgmEngine } from '../audio/bgmEngine';
 
 export interface NightDriver1976StageProps {
   alreadyCompleted: boolean;
@@ -22,15 +24,86 @@ export interface NightDriver1976StageProps {
 }
 
 interface RoadSegment {
-  curve: number;
-  width: number;
-  hazardX?: number; // -1 to 1 offset for obstacle
-  hazardType?: 'pylon' | 'oil' | 'barrier';
+  curve: number; // + right turn, - left turn
+  widthScale: number; // 1.0 standard, <1.0 narrow section
 }
 
-const TOTAL_DISTANCE_METERS = 2000;
-const ROAD_SEGMENT_LENGTH = 15; // meters per segment
-const TOTAL_SEGMENTS = Math.ceil(TOTAL_DISTANCE_METERS / ROAD_SEGMENT_LENGTH);
+interface ScatteredPylon {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rot: number;
+  vrot: number;
+  life: number;
+}
+
+const GOAL_DISTANCE_METERS = 2400;
+const CHECKPOINT_METERS = 1200;
+const SEGMENT_LENGTH_METERS = 10;
+const DRAW_DISTANCE_SEGMENTS = 38;
+const INITIAL_TIME_SECONDS = 90;
+const CHECKPOINT_BONUS_SECONDS = 15;
+const MAX_BASE_SPEED_KMH = 200;
+const BASE_CRUISE_SPEED_KMH = 96;
+const SPACEBAR_SPEED_MULTIPLIER = 1.65;
+const MAX_EFFECTIVE_SPEED_KMH = Math.round(MAX_BASE_SPEED_KMH * SPACEBAR_SPEED_MULTIPLIER);
+
+const GEAR_SPECS: Record<1 | 2 | 3 | 4, { minOpt: number; maxKmh: number; accel: number }> = {
+  1: { minOpt: 0, maxKmh: 68, accel: 95 },
+  2: { minOpt: 48, maxKmh: 116, accel: 74 },
+  3: { minOpt: 92, maxKmh: 160, accel: 58 },
+  4: { minOpt: 136, maxKmh: MAX_BASE_SPEED_KMH, accel: 46 },
+};
+
+function buildNightDriverTrack(): RoadSegment[] {
+  const segs: RoadSegment[] = [];
+  const addSection = (
+    enter: number,
+    hold: number,
+    exit: number,
+    targetCurve: number,
+    widthScale = 1.0
+  ) => {
+    for (let i = 0; i < enter; i++) {
+      const t = (i + 1) / enter;
+      const smooth = t * t * (3 - 2 * t);
+      segs.push({ curve: targetCurve * smooth, widthScale });
+    }
+    for (let i = 0; i < hold; i++) {
+      segs.push({ curve: targetCurve, widthScale });
+    }
+    for (let i = 0; i < exit; i++) {
+      const t = 1 - (i + 1) / exit;
+      const smooth = t * t * (3 - 2 * t);
+      segs.push({ curve: targetCurve * smooth, widthScale });
+    }
+  };
+
+  // Tramo 1: Recta de salida nocturna (Novice Start)
+  addSection(4, 18, 4, 0, 1.06);
+  // Tramo 2: Curva suave derecha e izquierda para tomar ritmo
+  addSection(8, 16, 8, 0.55, 1.02);
+  addSection(6, 14, 6, -0.62, 1.0);
+  // Tramo 3: Recta rápida hacia las eses del desfiladero
+  addSection(4, 12, 4, 0, 1.0);
+  addSection(7, 12, 7, 0.85, 0.96);
+  addSection(7, 12, 7, -0.9, 0.96);
+  // Tramo 4: Garganta estrecha tras la cascada (Chicane)
+  addSection(5, 14, 5, 0.42, 0.86);
+  addSection(5, 12, 5, -0.48, 0.86);
+  // Tramo 5: Horquilla Pro derecha + aceleración en recta larga
+  addSection(8, 16, 8, 1.15, 0.95);
+  addSection(4, 18, 4, 0, 1.02);
+  // Tramo 6: Horquilla izquierda + eses encadenadas Expert
+  addSection(8, 15, 8, -1.18, 0.94);
+  addSection(6, 10, 6, 0.92, 0.92);
+  addSection(6, 10, 6, -0.92, 0.92);
+  // Tramo 7: Sprint final hacia el Núcleo Fotónico
+  addSection(6, 20, 6, 0.35, 1.0);
+
+  return segs;
+}
 
 export const NightDriver1976Stage: React.FC<NightDriver1976StageProps> = ({
   alreadyCompleted,
@@ -38,414 +111,822 @@ export const NightDriver1976Stage: React.FC<NightDriver1976StageProps> = ({
   onReturn,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const trackRef = useRef<RoadSegment[]>(buildNightDriverTrack());
 
-  const [gameState, setGameState] = useState<'intro' | 'driving' | 'crashed' | 'victory'>('intro');
-  const [speed, setSpeed] = useState<number>(0);
-  const [gear, setGear] = useState<'LOW' | 'HIGH'>('LOW');
-  const [distanceRemaining, setDistanceRemaining] = useState<number>(TOTAL_DISTANCE_METERS);
-  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [gameState, setGameState] = useState<'intro' | 'driving' | 'timeup' | 'victory'>('intro');
+  const [speedKmh, setSpeedKmh] = useState<number>(0);
+  const [speedMultiplierUi, setSpeedMultiplierUi] = useState<number>(1);
+  const [gear, setGear] = useState<1 | 2 | 3 | 4>(1);
+  const [autoShift, setAutoShift] = useState<boolean>(true);
+  const [timeLeft, setTimeLeft] = useState<number>(INITIAL_TIME_SECONDS);
+  const [distanceMeters, setDistanceMeters] = useState<number>(0);
   const [score, setScore] = useState<number>(0);
   const [collisions, setCollisions] = useState<number>(0);
-  const [victoryClaimed, setVictoryClaimed] = useState<boolean>(alreadyCompleted);
+  const [checkpointBanner, setCheckpointBanner] = useState<boolean>(false);
+  const [acceleratingUi, setAcceleratingUi] = useState<boolean>(false);
 
-  const keysRef = useRef<{ left: boolean; right: boolean; up: boolean; down: boolean }>({
+  const keysRef = useRef({
     left: false,
     right: false,
-    up: false,
-    down: false,
+    up: false, // Acelerador estándar [↑ / W]
+    spaceBoost: false, // BARRA ESPACIADORA: aplica multiplicador de velocidad mientras se mantiene presionada
+    brake: false,
   });
 
-  const stateRef = useRef({
-    distanceTraveled: 0,
-    speedMph: 0,
-    gear: 'LOW' as 'LOW' | 'HIGH',
-    playerX: 0, // -1 (left road edge) to +1 (right road edge)
-    curveAccum: 0,
-    cameraZ: 0,
+  const simRef = useRef({
+    distance: 0,
+    baseSpeedKmh: 0,
+    speedMultiplier: 1,
+    speedKmh: 0,
+    gear: 1 as 1 | 2 | 3 | 4,
+    playerX: 0, // -1 = poste izquierdo, +1 = poste derecho
+    steerInput: 0, // -1 .. +1 suavizado para el volante
     crashTimer: 0,
-    elapsed: 0,
+    flashTimer: 0,
+    timeLeft: INITIAL_TIME_SECONDS,
+    checkpointReached: false,
+    checkpointBannerTimer: 0,
     score: 0,
     collisions: 0,
-    victoryDone: false,
+    victoryTriggered: false,
+    victoryTimestamp: 0,
+    scattered: [] as ScatteredPylon[],
   });
 
-  // Track map generation
-  const segmentsRef = useRef<RoadSegment[]>([]);
+  // Sintetizador Web Audio para el rugido grave del motor 1976 y choques con postes
+  const engineAudioRef = useRef<{
+    ctx: AudioContext;
+    osc: OscillatorNode;
+    subOsc: OscillatorNode;
+    filter: BiquadFilterNode;
+    gain: GainNode;
+  } | null>(null);
 
-  useEffect(() => {
-    const segs: RoadSegment[] = [];
-    for (let i = 0; i < TOTAL_SEGMENTS + 30; i++) {
-      let curve = 0;
-      let width = 580;
-      let hazardX: number | undefined;
-      let hazardType: 'pylon' | 'oil' | 'barrier' | undefined;
-
-      // Section 1: Intro warm-up (0 - 300m)
-      if (i > 10 && i < 25) {
-        curve = 0.8;
-      } else if (i >= 25 && i < 40) {
-        curve = -0.7;
-      }
-      // Section 2: Winding hills (300 - 800m)
-      else if (i >= 40 && i < 70) {
-        curve = Math.sin(i * 0.3) * 1.5;
-        if (i % 8 === 0) {
-          hazardX = (i % 2 === 0 ? 0.4 : -0.4);
-          hazardType = 'pylon';
+  const stopEngineAudio = useCallback(() => {
+    const node = engineAudioRef.current;
+    if (!node) return;
+    engineAudioRef.current = null;
+    try {
+      node.gain.gain.setTargetAtTime(0.0001, node.ctx.currentTime, 0.04);
+      setTimeout(() => {
+        try {
+          node.osc.stop();
+          node.subOsc.stop();
+          node.ctx.close().catch(() => {});
+        } catch {
+          // ignore cleanup errors
         }
-      }
-      // Section 3: The Dark Narrow Bridge (800 - 1300m)
-      else if (i >= 70 && i < 100) {
-        width = 380;
-        curve = Math.cos(i * 0.2) * 0.9;
-        if (i % 9 === 0) {
-          hazardX = (i % 3 === 0 ? 0 : (i % 2 === 0 ? 0.35 : -0.35));
-          hazardType = 'barrier';
-        }
-      }
-      // Section 4: Mountain Hairpin S-curves (1300 - 1800m)
-      else if (i >= 100 && i < 135) {
-        curve = (i % 16 < 8 ? 2.2 : -2.2);
-        if (i % 7 === 0) {
-          hazardX = (i % 2 === 0 ? 0.3 : -0.3);
-          hazardType = 'pylon';
-        }
-      }
-      // Section 5: Final high-speed sprint (1800 - 2000m)
-      else if (i >= 135 && i < TOTAL_SEGMENTS) {
-        curve = Math.sin(i * 0.1) * 0.4;
-      }
-
-      segs.push({ curve, width, hazardX, hazardType });
+      }, 90);
+    } catch {
+      // ignore
     }
-    segmentsRef.current = segs;
   }, []);
 
-  // Keyboard controls
+  const ensureEngineAudio = useCallback(() => {
+    if (typeof window === 'undefined' || bgmEngine.isMuted()) return;
+    if (engineAudioRef.current) {
+      if (engineAudioRef.current.ctx.state === 'suspended') {
+        engineAudioRef.current.ctx.resume().catch(() => {});
+      }
+      return;
+    }
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const subOsc = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+
+      osc.type = 'sawtooth';
+      subOsc.type = 'square';
+      osc.frequency.value = 52;
+      subOsc.frequency.value = 26;
+
+      filter.type = 'lowpass';
+      filter.frequency.value = 220;
+      filter.Q.value = 2.2;
+
+      gain.gain.value = 0.001;
+
+      osc.connect(filter);
+      subOsc.connect(filter);
+      filter.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      subOsc.start();
+      engineAudioRef.current = { ctx, osc, subOsc, filter, gain };
+    } catch {
+      // ignore if audio blocked
+    }
+  }, []);
+
+  const playCrashBurst = useCallback(() => {
+    if (typeof window === 'undefined' || bgmEngine.isMuted()) return;
+    const eng = engineAudioRef.current;
+    if (!eng) {
+      retroAudio.uiClick();
+      return;
+    }
+    try {
+      const { ctx } = eng;
+      const bufferSize = Math.floor(ctx.sampleRate * 0.22);
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.35));
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 420;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.16, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+      noise.connect(filter);
+      filter.connect(g);
+      g.connect(ctx.destination);
+      noise.start();
+    } catch {
+      retroAudio.uiClick();
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopEngineAudio();
+    };
+  }, [stopEngineAudio]);
+
+  const startNewRace = useCallback(
+    (keepSpaceHeld = false) => {
+      retroAudio.unlock();
+      retroAudio.uiClick();
+      ensureEngineAudio();
+      const initialMult = keepSpaceHeld ? SPACEBAR_SPEED_MULTIPLIER : 1;
+      simRef.current = {
+        distance: 0,
+        baseSpeedKmh: 0,
+        speedMultiplier: initialMult,
+        speedKmh: 0,
+        gear: 1,
+        playerX: 0,
+        steerInput: 0,
+        crashTimer: 0,
+        flashTimer: 0,
+        timeLeft: INITIAL_TIME_SECONDS,
+        checkpointReached: false,
+        checkpointBannerTimer: 0,
+        score: 0,
+        collisions: 0,
+        victoryTriggered: false,
+        victoryTimestamp: 0,
+        scattered: [],
+      };
+      keysRef.current.left = false;
+      keysRef.current.right = false;
+      keysRef.current.up = false;
+      keysRef.current.brake = false;
+      keysRef.current.spaceBoost = keepSpaceHeld;
+      setAcceleratingUi(keepSpaceHeld);
+      setSpeedKmh(0);
+      setSpeedMultiplierUi(initialMult);
+      setGear(1);
+      setTimeLeft(INITIAL_TIME_SECONDS);
+      setDistanceMeters(0);
+      setScore(0);
+      setCollisions(0);
+      setCheckpointBanner(false);
+      setGameState('driving');
+    },
+    [ensureEngineAudio]
+  );
+
+  // Controles de teclado: BARRA ESPACIADORA incrementa la velocidad mediante multiplicador mientras se mantiene presionada
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const isSpace = e.code === 'Space' || e.key === ' ';
+      if (isSpace) {
+        e.preventDefault();
+        keysRef.current.spaceBoost = true;
+        setAcceleratingUi(true);
+        if (gameState === 'intro') {
+          startNewRace(true);
+          return;
+        }
+        if (gameState === 'timeup') {
+          startNewRace(true);
+          return;
+        }
+        if (
+          gameState === 'victory' &&
+          performance.now() - simRef.current.victoryTimestamp > 750
+        ) {
+          stopEngineAudio();
+          onReturn();
+          return;
+        }
+      }
+
+      if (e.code === 'Escape') {
+        e.preventDefault();
+        stopEngineAudio();
+        onReturn();
+        return;
+      }
+
       if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
         keysRef.current.left = true;
       } else if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+        e.preventDefault();
         keysRef.current.right = true;
       } else if (e.code === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
-        keysRef.current.up = true;
-      } else if (e.code === 'ArrowDown' || e.key === 's' || e.key === 'S') {
-        keysRef.current.down = true;
-      } else if (e.code === 'Space' || e.key === 'Shift') {
         e.preventDefault();
-        stateRef.current.gear = stateRef.current.gear === 'LOW' ? 'HIGH' : 'LOW';
-        setGear(stateRef.current.gear);
-        retroAudio.uiClick();
+        keysRef.current.up = true;
+      } else if (
+        e.code === 'ArrowDown' ||
+        e.code === 'KeyS' ||
+        e.key === 's' ||
+        e.key === 'S' ||
+        e.code === 'ShiftLeft' ||
+        e.code === 'ShiftRight'
+      ) {
+        e.preventDefault();
+        keysRef.current.brake = true;
+      } else if (e.key === '1' || e.key === '2' || e.key === '3' || e.key === '4') {
+        const manualG = Number(e.key) as 1 | 2 | 3 | 4;
+        setAutoShift(false);
+        simRef.current.gear = manualG;
+        setGear(manualG);
+        retroAudio.tick();
+      } else if (e.key === 'e' || e.key === 'E') {
+        if (simRef.current.gear < 4) {
+          setAutoShift(false);
+          const nextG = (simRef.current.gear + 1) as 1 | 2 | 3 | 4;
+          simRef.current.gear = nextG;
+          setGear(nextG);
+          retroAudio.tick();
+        }
+      } else if (e.key === 'q' || e.key === 'Q') {
+        if (simRef.current.gear > 1) {
+          setAutoShift(false);
+          const prevG = (simRef.current.gear - 1) as 1 | 2 | 3 | 4;
+          simRef.current.gear = prevG;
+          setGear(prevG);
+          retroAudio.tick();
+        }
+      } else if (e.key === 'r' || e.key === 'R') {
+        if (gameState === 'driving' || gameState === 'timeup') {
+          startNewRace(false);
+        }
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        keysRef.current.spaceBoost = false;
+        setAcceleratingUi(false);
+      } else if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
         keysRef.current.left = false;
       } else if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
         keysRef.current.right = false;
       } else if (e.code === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
         keysRef.current.up = false;
-      } else if (e.code === 'ArrowDown' || e.key === 's' || e.key === 'S') {
-        keysRef.current.down = false;
+      } else if (
+        e.code === 'ArrowDown' ||
+        e.code === 'KeyS' ||
+        e.key === 's' ||
+        e.key === 'S' ||
+        e.code === 'ShiftLeft' ||
+        e.code === 'ShiftRight'
+      ) {
+        keysRef.current.brake = false;
       }
+    };
+
+    const onBlur = () => {
+      keysRef.current = {
+        left: false,
+        right: false,
+        up: false,
+        spaceBoost: false,
+        brake: false,
+      };
+      setAcceleratingUi(false);
     };
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
     };
-  }, []);
+  }, [gameState, onReturn, startNewRace, stopEngineAudio]);
 
-  // Main game physics and rendering loop
+  // Bucle principal de física y renderizado 3D estilo Atari 1976
   useEffect(() => {
-    let animId: number;
-    let lastTime = performance.now();
+    let rafId = 0;
+    let lastNow = performance.now();
+    let uiSyncAccum = 0;
 
-    const loop = (now: number) => {
-      const dt = Math.min(0.05, (now - lastTime) / 1000);
-      lastTime = now;
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastNow) / 1000));
+      lastNow = now;
+      uiSyncAccum += dt;
 
-      const st = stateRef.current;
+      const sim = simRef.current;
       const keys = keysRef.current;
-      const canvas = canvasRef.current;
+      const track = trackRef.current;
 
       if (gameState === 'driving') {
-        st.elapsed += dt;
-        setElapsedTime(Math.floor(st.elapsed));
+        ensureEngineAudio();
 
-        // Speed calculation based on throttle, brakes, gear
-        const maxSpeed = st.gear === 'LOW' ? 55 : 110;
-        const accel = st.gear === 'LOW' ? 45 : 30;
-        const drag = 18;
+        // Temporizador arcade
+        sim.timeLeft = Math.max(0, sim.timeLeft - dt);
+        if (sim.checkpointBannerTimer > 0) {
+          sim.checkpointBannerTimer = Math.max(0, sim.checkpointBannerTimer - dt);
+          if (sim.checkpointBannerTimer <= 0) setCheckpointBanner(false);
+        }
 
-        if (st.crashTimer > 0) {
-          st.crashTimer -= dt;
-          st.speedMph = Math.max(0, st.speedMph - 90 * dt);
-        } else {
-          if (keys.up) {
-            st.speedMph = Math.min(maxSpeed, st.speedMph + accel * dt);
-          } else if (keys.down) {
-            st.speedMph = Math.max(0, st.speedMph - 75 * dt);
+        // Asistencia automática de transmisión de 4 velocidades basada en la velocidad base
+        if (autoShift) {
+          let desiredGear: 1 | 2 | 3 | 4 = 1;
+          if (sim.baseSpeedKmh >= 142) desiredGear = 4;
+          else if (sim.baseSpeedKmh >= 98) desiredGear = 3;
+          else if (sim.baseSpeedKmh >= 54) desiredGear = 2;
+          if (desiredGear !== sim.gear) {
+            sim.gear = desiredGear;
+            setGear(desiredGear);
+          }
+        }
+
+        const gSpec = GEAR_SPECS[sim.gear];
+
+        // Multiplicador de velocidad activo mientras se mantiene presionada la BARRA ESPACIADORA
+        const targetMultiplier =
+          keys.spaceBoost && sim.crashTimer <= 0 ? SPACEBAR_SPEED_MULTIPLIER : 1.0;
+        const multRate = targetMultiplier > sim.speedMultiplier ? 14 : 18;
+        sim.speedMultiplier +=
+          (targetMultiplier - sim.speedMultiplier) * Math.min(1, multRate * dt);
+
+        // Velocidad base del coche + aceleración impulsada por Barra Espaciadora o [↑/W]
+        if (sim.crashTimer > 0) {
+          sim.crashTimer = Math.max(0, sim.crashTimer - dt);
+          sim.baseSpeedKmh = Math.max(24, sim.baseSpeedKmh - 175 * dt);
+        } else if (keys.brake) {
+          sim.baseSpeedKmh = Math.max(0, sim.baseSpeedKmh - 150 * dt);
+        } else if (keys.spaceBoost || keys.up) {
+          const lugPenalty = sim.baseSpeedKmh < gSpec.minOpt * 0.72 ? 0.55 : 1.0;
+          const accelBoost = keys.spaceBoost ? sim.speedMultiplier : 1.0;
+          if (sim.baseSpeedKmh < gSpec.maxKmh) {
+            sim.baseSpeedKmh = Math.min(
+              gSpec.maxKmh,
+              sim.baseSpeedKmh + gSpec.accel * lugPenalty * accelBoost * dt
+            );
           } else {
-            st.speedMph = Math.max(0, st.speedMph - drag * dt);
+            sim.baseSpeedKmh = Math.max(gSpec.maxKmh, sim.baseSpeedKmh - 38 * dt);
+          }
+        } else {
+          // Marcha crucero base para que el coche avance y el multiplicador de Espacio se perciba al instante
+          const cruiseCap = Math.min(gSpec.maxKmh, BASE_CRUISE_SPEED_KMH);
+          if (sim.baseSpeedKmh < cruiseCap) {
+            sim.baseSpeedKmh = Math.min(cruiseCap, sim.baseSpeedKmh + 52 * dt);
+          } else {
+            sim.baseSpeedKmh = Math.max(cruiseCap, sim.baseSpeedKmh - 46 * dt);
           }
         }
 
-        setSpeed(Math.round(st.speedMph));
+        // Velocidad efectiva final = velocidad base × multiplicador de Barra Espaciadora
+        sim.speedKmh = sim.baseSpeedKmh * sim.speedMultiplier;
 
-        // Steering & lateral movement
-        const currentSegmentIdx = Math.floor(st.distanceTraveled / ROAD_SEGMENT_LENGTH);
-        const seg = segmentsRef.current[currentSegmentIdx] || { curve: 0, width: 500 };
-
-        // Centrifugal force pulls motorcycle in opposite direction of curve
-        const centrifugal = (st.speedMph / 100) * seg.curve * dt * 1.8;
-        st.playerX += centrifugal;
-
-        const steerSpeed = (0.7 + (st.speedMph / maxSpeed) * 0.9) * dt;
-        if (keys.left) st.playerX -= steerSpeed;
-        if (keys.right) st.playerX += steerSpeed;
-
-        // Advance distance
-        const metersPerSecond = (st.speedMph * 1609.34) / 3600;
-        st.distanceTraveled += metersPerSecond * dt;
-        st.score = Math.floor(st.distanceTraveled * 1.2) - st.collisions * 25;
-        setScore(Math.max(0, st.score));
-
-        const remaining = Math.max(0, TOTAL_DISTANCE_METERS - st.distanceTraveled);
-        setDistanceRemaining(Math.round(remaining));
-
-        // Collision check with road edge posts or obstacles
-        const halfRoadRatio = 1.0;
-        if (Math.abs(st.playerX) > halfRoadRatio && st.crashTimer <= 0) {
-          // Off road crash!
-          st.crashTimer = 0.9;
-          st.collisions += 1;
-          setCollisions(st.collisions);
-          st.playerX = Math.sign(st.playerX) * 0.9;
-          retroAudio.uiClick();
+        if (sim.flashTimer > 0) {
+          sim.flashTimer = Math.max(0, sim.flashTimer - dt);
         }
 
-        // Check hazard in current segment
-        if (seg.hazardX !== undefined && st.crashTimer <= 0) {
-          const segProgress = (st.distanceTraveled % ROAD_SEGMENT_LENGTH) / ROAD_SEGMENT_LENGTH;
-          if (segProgress > 0.4 && segProgress < 0.6) {
-            if (Math.abs(st.playerX - seg.hazardX) < 0.28) {
-              st.crashTimer = 0.8;
-              st.collisions += 1;
-              setCollisions(st.collisions);
-              st.speedMph = Math.max(0, st.speedMph - 40);
-              retroAudio.uiClick();
-            }
+        // Volante suavizado
+        const targetSteer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+        const steerLerp = targetSteer !== 0 ? 11 * dt : 14 * dt;
+        sim.steerInput += (targetSteer - sim.steerInput) * Math.min(1, steerLerp);
+
+        // Segmento actual de carretera
+        const segIdx = Math.floor(sim.distance / SEGMENT_LENGTH_METERS) % track.length;
+        const currentSeg = track[segIdx];
+
+        // Fuerza centrífuga proporcional a la velocidad efectiva (incluye el multiplicador)
+        const speedNorm = sim.speedKmh / MAX_EFFECTIVE_SPEED_KMH;
+        const centrifugal =
+          currentSeg.curve * (0.32 + speedNorm * 1.18) * speedNorm * dt * 1.52;
+        sim.playerX -= centrifugal;
+
+        // Dirección activa del volante
+        const steerAuthority = (0.68 + speedNorm * 1.32) * dt * 1.58;
+        sim.playerX += sim.steerInput * steerAuthority;
+
+        // Avance longitudinal y puntaje multiplicados por la velocidad efectiva
+        const metersDelta = (sim.speedKmh / 3.6) * dt;
+        sim.distance += metersDelta;
+        sim.score += metersDelta * (1.2 + speedNorm * 1.8) * sim.speedMultiplier;
+
+        // Checkpoint de mitad de recorrido (+15s)
+        if (!sim.checkpointReached && sim.distance >= CHECKPOINT_METERS) {
+          sim.checkpointReached = true;
+          sim.timeLeft += CHECKPOINT_BONUS_SECONDS;
+          sim.checkpointBannerTimer = 2.8;
+          setCheckpointBanner(true);
+          retroAudio.zoneChime();
+        }
+
+        // Colisión contra los postes reflectantes laterales
+        const roadLimit = 0.96 * currentSeg.widthScale;
+        if (Math.abs(sim.playerX) > roadLimit && sim.crashTimer <= 0) {
+          const side = Math.sign(sim.playerX) || 1;
+          sim.crashTimer = 0.48;
+          sim.flashTimer = 0.25;
+          sim.collisions += 1;
+          sim.playerX = side * (roadLimit - 0.16);
+          sim.baseSpeedKmh = Math.max(28, sim.baseSpeedKmh * 0.48);
+          sim.speedMultiplier = 1.0;
+          sim.speedKmh = sim.baseSpeedKmh;
+          setCollisions(sim.collisions);
+          playCrashBurst();
+
+          // Postes blancos saliendo despedidos por el impacto
+          for (let k = 0; k < 5; k++) {
+            sim.scattered.push({
+              x: 410 + side * (165 + Math.random() * 45),
+              y: 350 - Math.random() * 35,
+              vx: -side * (90 + Math.random() * 160),
+              vy: -(150 + Math.random() * 170),
+              rot: Math.random() * Math.PI,
+              vrot: (Math.random() - 0.5) * 14,
+              life: 0.55,
+            });
           }
         }
 
-        // Win condition check
-        if (st.distanceTraveled >= TOTAL_DISTANCE_METERS && !st.victoryDone) {
-          st.victoryDone = true;
-          setGameState('victory');
-          setVictoryClaimed(true);
+        // Actualizar partículas de postes golpeados
+        for (let i = sim.scattered.length - 1; i >= 0; i--) {
+          const p = sim.scattered[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vy += 460 * dt;
+          p.rot += p.vrot * dt;
+          p.life -= dt;
+          if (p.life <= 0) sim.scattered.splice(i, 1);
+        }
+
+        // Actualizar sintetizador del motor reflejando el multiplicador de la Barra Espaciadora
+        const eng = engineAudioRef.current;
+        if (eng && !bgmEngine.isMuted()) {
+          const gearMax = GEAR_SPECS[sim.gear].maxKmh;
+          const gearMin = GEAR_SPECS[sim.gear].minOpt * 0.65;
+          const rpmRatio = Math.max(
+            0.08,
+            Math.min(1.15, (sim.baseSpeedKmh - gearMin) / Math.max(25, gearMax - gearMin))
+          );
+          const baseFreq = (44 + rpmRatio * 92 + sim.gear * 8) * (0.85 + sim.speedMultiplier * 0.22);
+          eng.osc.frequency.setTargetAtTime(baseFreq, eng.ctx.currentTime, 0.03);
+          eng.subOsc.frequency.setTargetAtTime(baseFreq * 0.5, eng.ctx.currentTime, 0.03);
+          eng.filter.frequency.setTargetAtTime(
+            180 + rpmRatio * 420 + (keys.spaceBoost ? 220 : 0),
+            eng.ctx.currentTime,
+            0.04
+          );
+          const targetVol =
+            sim.speedKmh < 2 ? 0.012 : keys.spaceBoost ? 0.056 : 0.032;
+          eng.gain.gain.setTargetAtTime(targetVol, eng.ctx.currentTime, 0.04);
+        } else if (eng && bgmEngine.isMuted()) {
+          eng.gain.gain.setTargetAtTime(0.0001, eng.ctx.currentTime, 0.03);
+        }
+
+        // Sincronizar HUD React a ~15 Hz para fluidez máxima
+        if (uiSyncAccum >= 0.065) {
+          uiSyncAccum = 0;
+          setSpeedKmh(Math.round(sim.speedKmh));
+          setSpeedMultiplierUi(Number(sim.speedMultiplier.toFixed(2)));
+          setDistanceMeters(Math.min(GOAL_DISTANCE_METERS, Math.floor(sim.distance)));
+          setTimeLeft(Math.ceil(sim.timeLeft));
+          setScore(Math.floor(sim.score));
+        }
+
+        // Condición de victoria: cruzar los 2.400 m
+        if (sim.distance >= GOAL_DISTANCE_METERS && !sim.victoryTriggered) {
+          sim.victoryTriggered = true;
+          sim.victoryTimestamp = now;
+          const timeBonus = Math.round(sim.timeLeft * 25);
+          const finalScore = Math.max(100, Math.floor(sim.score) + timeBonus);
+          setDistanceMeters(GOAL_DISTANCE_METERS);
+          setScore(finalScore);
+          setSpeedKmh(Math.round(sim.speedKmh));
+          setSpeedMultiplierUi(1);
+          stopEngineAudio();
           retroAudio.achievementUnlock();
-          onVictory(st.score);
+          setGameState('victory');
+          onVictory(finalScore);
+        } else if (sim.timeLeft <= 0 && !sim.victoryTriggered) {
+          stopEngineAudio();
+          retroAudio.npcBlip(0.5);
+          setTimeLeft(0);
+          setGameState('timeup');
+        }
+      } else {
+        // Silenciar motor fuera de carrera activa
+        const eng = engineAudioRef.current;
+        if (eng) {
+          eng.gain.gain.setTargetAtTime(0.0001, eng.ctx.currentTime, 0.04);
         }
       }
 
-      // Render 3D Night Driver canvas
+      const canvas = canvasRef.current;
       if (canvas) {
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          renderNightDriverScene(ctx, canvas.width, canvas.height, st, segmentsRef.current);
+          drawAtariNightDriverCRT(ctx, canvas.width, canvas.height, sim, track, now * 0.001);
         }
       }
 
-      animId = requestAnimationFrame(loop);
+      rafId = requestAnimationFrame(tick);
     };
 
-    animId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(animId);
-  }, [gameState, onVictory]);
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [autoShift, ensureEngineAudio, gameState, onVictory, playCrashBurst, stopEngineAudio]);
 
-  const handleStart = () => {
-    stateRef.current.distanceTraveled = 0;
-    stateRef.current.speedMph = 10;
-    stateRef.current.gear = 'LOW';
-    stateRef.current.playerX = 0;
-    stateRef.current.crashTimer = 0;
-    stateRef.current.elapsed = 0;
-    stateRef.current.score = 0;
-    stateRef.current.collisions = 0;
-    stateRef.current.victoryDone = false;
-    setGear('LOW');
-    setGameState('driving');
-    retroAudio.uiClick();
-  };
+  const progressPct = Math.min(100, (distanceMeters / GOAL_DISTANCE_METERS) * 100);
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-center bg-[#010308] text-slate-100 select-none overflow-hidden font-mono">
-      {/* Top Header Bar */}
-      <header className="absolute top-0 left-0 right-0 z-30 flex items-center justify-between px-4 py-2.5 bg-black/80 backdrop-blur-md border-b border-cyan-500/30">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              retroAudio.uiClick();
-              onReturn();
-            }}
-            className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 border border-slate-700 hover:border-cyan-400 text-cyan-300 rounded text-xs transition"
+    <div className="relative mx-auto flex h-full max-h-[92vh] w-full max-w-5xl flex-col items-center justify-between overflow-hidden rounded-2xl border-2 border-sky-500/40 bg-[#03050a] p-3 text-slate-100 shadow-[0_0_60px_rgba(56,189,248,0.18)] select-none sm:p-4">
+      {/* Marquesina superior inspirada en el gabinete Atari Night Driver (1976) */}
+      <div className="flex w-full items-center justify-between gap-3 rounded-xl border border-sky-400/30 bg-slate-950/90 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => {
+            stopEngineAudio();
+            onReturn();
+          }}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-mono text-xs font-bold text-slate-200 transition hover:border-sky-400 hover:text-sky-300"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          VOLVER A LA GRUTA
+        </button>
+
+        <div className="flex flex-col items-center text-center">
+          <span className="font-mono text-[10px] tracking-[0.26em] text-sky-400 uppercase">
+            ATARI INC. · OCTUBRE 1976 · GRUTA TRAS LA CASCADA
+          </span>
+          <h1 className="font-['Silkscreen',monospace] text-base font-bold tracking-wider text-white sm:text-xl">
+            NIGHT DRIVER
+          </h1>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            setAutoShift((prev) => !prev);
+            retroAudio.tick();
+          }}
+          className="rounded-lg border border-sky-500/40 bg-sky-950/50 px-2.5 py-1.5 font-mono text-[11px] font-bold text-sky-200 transition hover:border-sky-300"
+          title="Alternar caja automática o manual [1-4 / ↑↓]"
+        >
+          CAJA: {autoShift ? 'AUTO 1-4' : 'MANUAL 1-4'}
+        </button>
+      </div>
+
+      {/* Barra de telemetría superior y progreso hacia el Núcleo Fotónico */}
+      <div className="mt-2 grid w-full grid-cols-4 gap-2 rounded-xl border border-slate-800 bg-black/80 px-3 py-2 font-mono text-xs">
+        <div className="flex flex-col">
+          <span className="text-[10px] text-slate-400">TIEMPO</span>
+          <span
+            className={`text-base font-bold sm:text-lg ${
+              timeLeft <= 15 ? 'animate-pulse text-rose-400' : 'text-amber-300'
+            }`}
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Volver a la Isla</span>
-          </button>
-          <div>
-            <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">
-              ATARI 1976 · RUTA NOCTURNA
-            </span>
-            <h1 className="text-sm font-bold text-white tracking-wide">
-              NIGHT DRIVER · LA CARRETERA DE LOS TRANSISTORES
-            </h1>
-          </div>
+            {String(timeLeft).padStart(2, '0')} s
+          </span>
         </div>
-
-        {/* Live HUD Telemetry */}
-        <div className="flex items-center gap-4 text-xs">
-          <div className="flex items-center gap-1.5 bg-black/60 px-2.5 py-1 rounded border border-white/10">
-            <Flag className="w-3.5 h-3.5 text-cyan-400" />
-            <span className="text-slate-400">Meta:</span>
-            <span className="font-bold text-cyan-300 tabular-nums">{distanceRemaining} m</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-black/60 px-2.5 py-1 rounded border border-white/10">
-            <Gauge className="w-3.5 h-3.5 text-amber-400" />
-            <span className="text-slate-400">Velocidad:</span>
-            <span className="font-bold text-amber-300 tabular-nums">{speed} MPH</span>
-          </div>
-          <div className="flex items-center gap-1.5 bg-black/60 px-2.5 py-1 rounded border border-white/10">
-            <span className="text-slate-400">Marcha:</span>
-            <span className={`font-bold px-1.5 py-0.5 rounded text-[11px] ${gear === 'HIGH' ? 'bg-amber-500 text-black' : 'bg-cyan-500 text-black'}`}>
-              {gear}
+        <div className="flex flex-col">
+          <span className="text-[10px] text-slate-400">VELOCIDAD / MULT.</span>
+          <span className="flex items-baseline gap-1.5 text-base font-bold text-sky-300 sm:text-lg">
+            <span>
+              {String(speedKmh).padStart(3, '0')} <span className="text-xs">KM/H</span> · M{gear}
+            </span>
+            <span
+              className={`rounded px-1 py-0.5 text-[10px] font-bold ${
+                speedMultiplierUi > 1.05
+                  ? 'bg-amber-400 text-slate-950'
+                  : 'bg-slate-800 text-slate-400'
+              }`}
+            >
+              ×{speedMultiplierUi.toFixed(2)}
+            </span>
+          </span>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-[10px] text-slate-400">PUNTUACIÓN</span>
+          <span className="text-base font-bold text-white sm:text-lg">
+            {String(score).padStart(5, '0')}
+          </span>
+        </div>
+        <div className="flex flex-col justify-center">
+          <div className="flex items-center justify-between text-[10px] text-slate-400">
+            <span>RUTA NOCTURNA</span>
+            <span className="font-bold text-emerald-300">
+              {distanceMeters} / {GOAL_DISTANCE_METERS} m
             </span>
           </div>
+          <svg
+            className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-900 ring-1 ring-slate-700"
+            viewBox="0 0 100 8"
+            preserveAspectRatio="none"
+          >
+            <rect x="0" y="0" width={progressPct} height="8" className="fill-sky-400" />
+          </svg>
         </div>
-      </header>
+      </div>
 
-      {/* Main Simulation Canvas */}
-      <div className="relative w-full max-w-4xl h-[78vh] mt-12 bg-black rounded-lg overflow-hidden border-2 border-cyan-500/40 shadow-[0_0_40px_rgba(0,243,255,0.18)]">
+      {/* Monitor CRT monocromo con bisel impreso original de 1976 */}
+      <div className="relative my-2 flex w-full flex-1 items-center justify-center overflow-hidden rounded-xl border-2 border-slate-800 bg-black shadow-inner">
         <canvas
           ref={canvasRef}
-          width={800}
-          height={600}
-          className="w-full h-full object-contain crisp-arcade-canvas"
+          width={820}
+          height={450}
+          className="h-full w-full max-h-[58vh] object-contain"
         />
 
-        {/* Modal: Intro / Instructions */}
-        {gameState === 'intro' && (
-          <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-sm flex items-center justify-center p-6">
-            <div className="max-w-md w-full bg-slate-950 border-2 border-cyan-400 p-6 rounded-lg text-center space-y-4 shadow-2xl">
-              <div className="w-12 h-12 mx-auto rounded-full bg-cyan-950/80 border border-cyan-400 flex items-center justify-center text-cyan-300">
-                <Zap className="w-6 h-6 animate-pulse" />
-              </div>
-              <div>
-                <span className="text-xs text-amber-400 font-bold uppercase tracking-widest">
-                  1976 FIRST-PERSON MOTORCYCLE
-                </span>
-                <h2 className="text-xl font-bold text-white mt-1">NIGHT DRIVER</h2>
-                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                  Conduce por la carretera de montaña a través de la noche. Los postes reflectantes marcan el asfalto. Completa los <strong>2.000 metros</strong> para recuperar los <strong>3 Transistores de Germanio</strong> requeridos por el técnico Dylan para reparar Los Cuatro Caminos.
-                </p>
-              </div>
+        {checkpointBanner && gameState === 'driving' && (
+          <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 rounded-lg border border-emerald-400/70 bg-emerald-950/90 px-4 py-1.5 font-mono text-xs font-bold tracking-widest text-emerald-200 shadow-lg">
+            ★ CONTROL DE RUTA ALCANZADO · +15 SEGUNDOS EXTRA ★
+          </div>
+        )}
 
-              {/* Controls guide */}
-              <div className="bg-black/70 p-3 rounded border border-white/10 text-left text-xs space-y-1.5 text-slate-300">
-                <div className="flex justify-between">
-                  <span className="text-cyan-400 font-bold">[ ↑ ] o [ W ]</span>
-                  <span>Acelerar</span>
+        {/* Pantalla inicial de instrucciones del gabinete */}
+        {gameState === 'intro' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/80 p-4 backdrop-blur-[2px]">
+            <div className="w-full max-w-lg rounded-2xl border border-sky-400/50 bg-slate-950/95 p-5 text-center shadow-[0_0_45px_rgba(56,189,248,0.25)]">
+              <div className="mx-auto mb-2 inline-flex items-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-950/60 px-2.5 py-1 font-mono text-[11px] font-bold text-sky-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                GABINETE OCULTO BAJO LA CASCADA
+              </div>
+              <h2 className="font-['Silkscreen',monospace] text-lg font-bold text-white sm:text-xl">
+                NIGHT DRIVER · 1976
+              </h2>
+              <p className="mt-2 text-xs leading-relaxed text-slate-300 sm:text-sm">
+                En plena oscuridad, guíate únicamente por los{' '}
+                <span className="font-semibold text-white">postes reflectantes blancos</span> de la
+                carretera. Completa los{' '}
+                <span className="font-semibold text-sky-300">2.400 metros</span> antes de que se
+                agote el reloj para liberar el{' '}
+                <span className="font-semibold text-amber-300">
+                  Núcleo Fotónico de Haluro (1976)
+                </span>
+                .
+              </p>
+
+              <div className="mt-4 grid grid-cols-1 gap-2 rounded-xl border border-slate-800 bg-black/70 p-3 text-left font-mono text-xs sm:grid-cols-2">
+                <div className="flex items-center gap-2">
+                  <span className="rounded border border-sky-400 bg-sky-950 px-2 py-0.5 font-bold text-sky-200">
+                    ESPACIO
+                  </span>
+                  <span className="text-slate-200">
+                    Mantener: Velocidad ×{SPACEBAR_SPEED_MULTIPLIER}
+                  </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-cyan-400 font-bold">[ ↓ ] o [ S ]</span>
-                  <span>Frenar</span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-bold text-slate-200">
+                    ← / → · A / D
+                  </span>
+                  <span className="text-slate-200">Girar volante</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-cyan-400 font-bold">[ ← / → ] o [ A / D ]</span>
-                  <span>Girar Manillar</span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-bold text-slate-200">
+                    ↑ / W · 1-4
+                  </span>
+                  <span className="text-slate-300">Acelerador base / Marchas</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-amber-400 font-bold">[ ESPACIO ] o [ SHIFT ]</span>
-                  <span>Cambiar Marcha (LOW / HIGH)</span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded border border-slate-600 bg-slate-900 px-2 py-0.5 font-bold text-slate-200">
+                    ↓ / S / SHIFT
+                  </span>
+                  <span className="text-slate-300">Frenar en horquillas</span>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={handleStart}
-                className="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-black font-bold uppercase tracking-wider rounded shadow-lg transition transform hover:-translate-y-0.5 cursor-pointer text-sm"
+                onClick={() => startNewRace(false)}
+                className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-sky-300 bg-sky-500 px-5 py-2.5 font-mono text-sm font-bold text-slate-950 shadow-[0_0_20px_rgba(56,189,248,0.5)] transition hover:bg-sky-400"
               >
-                Encender Motor y Comenzar
+                <Gauge className="h-4 w-4" />
+                INSERT COIN · INICIAR RUTA [ESPACIO]
               </button>
             </div>
           </div>
         )}
 
-        {/* Modal: Victory Screen */}
-        {gameState === 'victory' && (
-          <div className="absolute inset-0 z-40 bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
-            <div className="max-w-md w-full bg-slate-950 border-2 border-amber-400 p-6 rounded-lg text-center space-y-4 shadow-2xl">
-              <div className="w-14 h-14 mx-auto rounded-full bg-amber-950/80 border-2 border-amber-400 flex items-center justify-center text-amber-300 shadow-[0_0_25px_rgba(251,191,36,0.5)]">
-                <Trophy className="w-8 h-8" />
-              </div>
-              <div>
-                <span className="text-xs text-amber-400 font-bold uppercase tracking-widest">
-                  ¡RUTA NOCTURNA COMPLETADA!
-                </span>
-                <h2 className="text-2xl font-bold text-white mt-1">META ALCANZADA</h2>
-                <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                  Has dominado las curvas y la inercia de la medianoche. En el punto de control final recogiste el estuche blindado:
-                </p>
-              </div>
-
-              <div className="p-4 bg-gradient-to-r from-amber-950/60 to-orange-950/60 border border-amber-500/50 rounded-lg text-left space-y-1">
-                <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  <span>3 Transistores de Germanio (1976)</span>
-                </div>
-                <p className="text-[11px] text-amber-100/80">
-                  Semiconductores analógicos genuinos. Dylan los necesita en <strong>Taller RS — Retro State</strong> para revivir las cuatro máquinas arcade.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="bg-black/60 p-2 rounded border border-white/10">
-                  <span className="text-slate-400 block text-[10px]">TIEMPO</span>
-                  <span className="font-bold text-cyan-300">{elapsedTime}s</span>
-                </div>
-                <div className="bg-black/60 p-2 rounded border border-white/10">
-                  <span className="text-slate-400 block text-[10px]">PUNTOS</span>
-                  <span className="font-bold text-amber-300">{score}</span>
-                </div>
-                <div className="bg-black/60 p-2 rounded border border-white/10">
-                  <span className="text-slate-400 block text-[10px]">COLISIONES</span>
-                  <span className="font-bold text-rose-400">{collisions}</span>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
+        {/* Pantalla de Tiempo Agotado */}
+        {gameState === 'timeup' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl border border-rose-500/50 bg-slate-950 p-5 text-center shadow-2xl">
+              <p className="font-mono text-xs font-bold tracking-widest text-rose-400">
+                GAME OVER · TIEMPO AGOTADO
+              </p>
+              <h3 className="mt-1 font-['Silkscreen',monospace] text-lg font-bold text-white">
+                LA NOCHE TE DETUVO A {GOAL_DISTANCE_METERS - distanceMeters} M
+              </h3>
+              <p className="mt-2 text-xs text-slate-300">
+                Mantén presionada la <span className="font-bold text-sky-300">Barra Espaciadora</span>{' '}
+                en las rectas y suéltala ligeramente al entrar en las horquillas más cerradas para no
+                impactar contra los postes reflectantes.
+              </p>
+              <div className="mt-4 flex gap-2">
                 <button
                   type="button"
-                  onClick={handleStart}
-                  className="flex-1 py-2.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-slate-200 text-xs font-bold rounded cursor-pointer transition"
+                  onClick={() => startNewRace(false)}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2.5 font-mono text-xs font-bold text-slate-950 transition hover:bg-sky-400"
                 >
-                  Correr de Nuevo
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  REINTENTAR [ESPACIO]
                 </button>
                 <button
                   type="button"
                   onClick={() => {
-                    retroAudio.uiClick();
+                    stopEngineAudio();
                     onReturn();
                   }}
-                  className="flex-1 py-2.5 bg-cyan-400 hover:bg-cyan-300 text-black text-xs font-bold rounded cursor-pointer transition shadow-md"
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 font-mono text-xs font-bold text-slate-300 transition hover:border-slate-500"
                 >
-                  Regresar a la Isla
+                  SALIR
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pantalla de Victoria: Obtención del Núcleo Fotónico de Haluro (1976) */}
+        {gameState === 'victory' && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-lg rounded-2xl border-2 border-sky-400/70 bg-slate-950 p-5 text-center shadow-[0_0_50px_rgba(56,189,248,0.35)]">
+              <div className="mx-auto mb-2 inline-flex items-center gap-1.5 rounded-md border border-emerald-400/50 bg-emerald-950/70 px-3 py-1 font-mono text-xs font-bold text-emerald-300">
+                <Trophy className="h-3.5 w-3.5" />
+                ¡RUTA NOCTURNA DE 1976 COMPLETADA!
+              </div>
+              <h3 className="font-['Silkscreen',monospace] text-lg font-bold text-white sm:text-xl">
+                NÚCLEO FOTÓNICO DE HALURO
+              </h3>
+              <p className="mt-1 font-mono text-xs font-semibold text-sky-300">
+                {alreadyCompleted
+                  ? 'ARTEFACTO DE TRAMA VERIFICADO EN TU MOCHILA [I]'
+                  : '★ NUEVO OBJETO CLAVE AÑADIDO AL INVENTARIO [I] ★'}
+              </p>
+
+              <div className="mt-3 rounded-xl border border-sky-500/30 bg-sky-950/30 p-3 text-left text-xs leading-relaxed text-slate-200">
+                El compartimento sellado del gabinete de <span className="font-bold">Night Driver</span>{' '}
+                se abre entre la bruma de la cascada y revela el{' '}
+                <span className="font-bold text-sky-300">Núcleo Fotónico de Haluro (1976)</span>.
+                Llévaselo al técnico <span className="font-bold text-amber-300">Dylan</span> en{' '}
+                <span className="italic">Taller RS — Retro State</span> para purgar la oscuridad de
+                Gran Koopa y reactivar la Sala de Los Cuatro Caminos.
+              </div>
+
+              <div className="mt-3 flex justify-center gap-6 font-mono text-xs text-slate-300">
+                <span>
+                  PUNTOS: <strong className="text-white">{score}</strong>
+                </span>
+                <span>
+                  IMPACTOS: <strong className="text-amber-300">{collisions}</strong>
+                </span>
+                <span>
+                  TIEMPO RESTANTE: <strong className="text-emerald-300">{timeLeft}s</strong>
+                </span>
+              </div>
+
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    stopEngineAudio();
+                    onReturn();
+                  }}
+                  className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-sky-300 bg-sky-400 px-4 py-2.5 font-mono text-xs font-bold text-slate-950 transition hover:bg-sky-300"
+                >
+                  <Flag className="h-4 w-4" />
+                  GUARDAR NÚCLEO Y VOLVER A LA CUEVA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startNewRace(false)}
+                  className="rounded-xl border border-slate-700 bg-slate-900 px-3.5 py-2.5 font-mono text-xs font-bold text-slate-300 transition hover:border-sky-400 hover:text-sky-200"
+                >
+                  REJUGAR
                 </button>
               </div>
             </div>
@@ -453,269 +934,354 @@ export const NightDriver1976Stage: React.FC<NightDriver1976StageProps> = ({
         )}
       </div>
 
-      {/* On-screen touch/mouse helper controls for accessibility */}
-      <div className="mt-3 flex items-center gap-3 text-xs text-slate-400">
-        <span className="text-[11px] text-slate-500">
-          Usa [W / S] acelerar/frenar · [A / D] volante · [ESPACIO] marcha
-        </span>
+      {/* Panel inferior de controles del gabinete (Teclado + soporte táctil/clic) */}
+      <div className="flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/90 px-3 py-2 font-mono text-xs">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onMouseDown={() => {
+              keysRef.current.left = true;
+            }}
+            onMouseUp={() => {
+              keysRef.current.left = false;
+            }}
+            onMouseLeave={() => {
+              keysRef.current.left = false;
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              keysRef.current.left = true;
+            }}
+            onTouchEnd={() => {
+              keysRef.current.left = false;
+            }}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-bold text-slate-200 active:border-sky-400 active:bg-sky-950"
+          >
+            ◀ IZQ [A]
+          </button>
+          <button
+            type="button"
+            onMouseDown={() => {
+              keysRef.current.right = true;
+            }}
+            onMouseUp={() => {
+              keysRef.current.right = false;
+            }}
+            onMouseLeave={() => {
+              keysRef.current.right = false;
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              keysRef.current.right = true;
+            }}
+            onTouchEnd={() => {
+              keysRef.current.right = false;
+            }}
+            className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 font-bold text-slate-200 active:border-sky-400 active:bg-sky-950"
+          >
+            DER [D] ▶
+          </button>
+        </div>
+
+        <button
+          type="button"
+          onMouseDown={() => {
+            if (gameState === 'intro' || gameState === 'timeup') {
+              startNewRace(true);
+            } else {
+              keysRef.current.spaceBoost = true;
+              setAcceleratingUi(true);
+            }
+          }}
+          onMouseUp={() => {
+            keysRef.current.spaceBoost = false;
+            setAcceleratingUi(false);
+          }}
+          onMouseLeave={() => {
+            keysRef.current.spaceBoost = false;
+            setAcceleratingUi(false);
+          }}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            if (gameState === 'intro' || gameState === 'timeup') {
+              startNewRace(true);
+            } else {
+              keysRef.current.spaceBoost = true;
+              setAcceleratingUi(true);
+            }
+          }}
+          onTouchEnd={() => {
+            keysRef.current.spaceBoost = false;
+            setAcceleratingUi(false);
+          }}
+          className={`flex-1 rounded-lg border px-4 py-1.5 text-center font-bold tracking-wider transition sm:max-w-xs ${
+            acceleratingUi
+              ? 'border-amber-300 bg-amber-400 text-slate-950 shadow-[0_0_18px_rgba(251,191,36,0.65)]'
+              : 'border-sky-500/50 bg-sky-950/60 text-sky-200 hover:border-sky-400'
+          }`}
+        >
+          {acceleratingUi
+            ? `▲ VELOCIDAD ×${SPACEBAR_SPEED_MULTIPLIER} ACTIVA [ESPACIO]`
+            : `MANTENER [ESPACIO] VELOCIDAD ×${SPACEBAR_SPEED_MULTIPLIER}`}
+        </button>
+
+        <div className="hidden items-center gap-2 text-[11px] text-slate-400 md:flex">
+          <Volume2 className="h-3.5 w-3.5 text-sky-400" />
+          <span>MARCHAS [1-4 / Q·E] · FRENO [S] · REINICIAR [R]</span>
+        </div>
       </div>
     </div>
   );
 };
 
 /**
- * 3D Pseudo-depth rendering of Night Driver road, reflector posts, motorcycle handlebars, and instruments.
+ * Renderizador CRT monocromo + superposición plástica original de Atari Night Driver (1976)
  */
-function renderNightDriverScene(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  state: {
-    distanceTraveled: number;
-    speedMph: number;
-    gear: 'LOW' | 'HIGH';
-    playerX: number;
-    crashTimer: number;
-    elapsed: number;
-  },
-  segments: RoadSegment[]
-): void {
-  // Clear black CRT night sky
-  ctx.fillStyle = '#020409';
-  ctx.fillRect(0, 0, width, height);
-
-  // Distant mountain silhouette and twinkling stars
-  ctx.fillStyle = '#ffffff';
-  for (let s = 0; s < 40; s++) {
-    const sx = ((s * 137 + state.elapsed * 5) % width);
-    const sy = (s * 43) % (height * 0.4);
-    const size = (s % 3 === 0) ? 2 : 1;
-    ctx.fillRect(sx, sy, size, size);
-  }
-
-  // Horizon & Dark ground
-  const horizonY = height * 0.44;
-  ctx.fillStyle = '#010204';
-  ctx.fillRect(0, horizonY, width, height - horizonY);
-
-  const currentSegmentIdx = Math.floor(state.distanceTraveled / ROAD_SEGMENT_LENGTH);
-  const segPercent = (state.distanceTraveled % ROAD_SEGMENT_LENGTH) / ROAD_SEGMENT_LENGTH;
-
-  // Render road posts from horizon forward (painter's algorithm)
-  const DRAW_DISTANCE = 45; // segments ahead
-  let accumulatedCurve = 0;
-
-  for (let n = DRAW_DISTANCE; n > 0; n--) {
-    const segIdx = currentSegmentIdx + n;
-    const seg = segments[segIdx] || { curve: 0, width: 500 };
-
-    accumulatedCurve += seg.curve;
-
-    // Perspective projection
-    const z = (n - segPercent) * ROAD_SEGMENT_LENGTH;
-    if (z <= 1) continue;
-
-    const scale = 320 / z;
-    const screenY = horizonY + (120 * scale);
-    if (screenY > height) continue;
-
-    // Center of road with curve offset & player lateral offset
-    const curveOffset = accumulatedCurve * (scale * 24);
-    const playerOffset = state.playerX * (seg.width * 0.5 * scale);
-    const screenX = width * 0.5 + curveOffset - playerOffset;
-
-    const roadHalfW = (seg.width * 0.5) * scale;
-    const leftPostX = screenX - roadHalfW;
-    const rightPostX = screenX + roadHalfW;
-
-    const postH = Math.max(2, 28 * scale);
-    const postW = Math.max(2, 6 * scale);
-
-    // Render left white reflector post
-    ctx.fillStyle = n % 2 === 0 ? '#ffffff' : '#94a3b8';
-    ctx.fillRect(leftPostX - postW * 0.5, screenY - postH, postW, postH);
-
-    // Amber reflector tip
-    ctx.fillStyle = '#f59e0b';
-    ctx.fillRect(leftPostX - postW * 0.5, screenY - postH, postW, Math.max(1, postH * 0.3));
-
-    // Render right white reflector post
-    ctx.fillStyle = n % 2 === 0 ? '#ffffff' : '#94a3b8';
-    ctx.fillRect(rightPostX - postW * 0.5, screenY - postH, postW, postH);
-
-    // Cyan reflector tip
-    ctx.fillStyle = '#06b6d4';
-    ctx.fillRect(rightPostX - postW * 0.5, screenY - postH, postW, Math.max(1, postH * 0.3));
-
-    // Center dash line on road
-    if (n % 3 === 0 && scale > 0.08) {
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.fillRect(screenX - 1.5, screenY - 2, 3, Math.max(2, 10 * scale));
-    }
-
-    // Render Hazard / Obstacle if present
-    if (seg.hazardX !== undefined && scale > 0.08) {
-      const hazardScreenX = screenX + seg.hazardX * roadHalfW;
-      const hSize = 32 * scale;
-
-      ctx.fillStyle = '#e11d48';
-      ctx.fillRect(hazardScreenX - hSize * 0.5, screenY - hSize, hSize, hSize);
-
-      ctx.fillStyle = '#fbbf24';
-      ctx.fillRect(hazardScreenX - hSize * 0.3, screenY - hSize * 0.8, hSize * 0.6, hSize * 0.4);
-    }
-  }
-
-  // Crash flash effect
-  if (state.crashTimer > 0) {
-    ctx.fillStyle = `rgba(239, 68, 68, ${Math.min(0.65, state.crashTimer)})`;
-    ctx.fillRect(0, 0, width, height);
-
-    // Collision spark lines
-    ctx.strokeStyle = '#fef08a';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 8; i++) {
-      const angle = (i * Math.PI) / 4;
-      const len = 35 + Math.sin(state.elapsed * 30 + i) * 15;
-      ctx.beginPath();
-      ctx.moveTo(width * 0.5, height * 0.7);
-      ctx.lineTo(width * 0.5 + Math.cos(angle) * len, height * 0.7 + Math.sin(angle) * len);
-      ctx.stroke();
-    }
-  }
-
-  // Draw 1976 Motorcycle Cockpit & Handlebars
-  drawMotorcycleCockpit(ctx, width, height, state.speedMph, state.gear, state.elapsed);
-}
-
-/**
- * Draws the motorcycle handlebars, windscreen rim, instrument dials, and headlamp reflection.
- */
-function drawMotorcycleCockpit(
+function drawAtariNightDriverCRT(
   ctx: CanvasRenderingContext2D,
   w: number,
   h: number,
-  speedMph: number,
-  gear: 'LOW' | 'HIGH',
-  elapsed: number
+  sim: {
+    distance: number;
+    speedMultiplier: number;
+    speedKmh: number;
+    gear: 1 | 2 | 3 | 4;
+    playerX: number;
+    steerInput: number;
+    crashTimer: number;
+    flashTimer: number;
+    timeLeft: number;
+    score: number;
+    scattered: ScatteredPylon[];
+  },
+  track: RoadSegment[],
+  elapsedSec: number
 ): void {
-  const centerY = h - 110;
-  const vibration = (speedMph / 110) * Math.sin(elapsed * 45) * 2;
+  // 1. Noche absoluta de tubo catódico
+  ctx.fillStyle = sim.flashTimer > 0 ? '#1e0b16' : '#020306';
+  ctx.fillRect(0, 0, w, h);
 
-  ctx.save();
-  ctx.translate(0, vibration);
+  const horizonY = Math.round(h * 0.34);
+  const centerX = w * 0.5;
+  const baseSegIdx = Math.floor(sim.distance / SEGMENT_LENGTH_METERS);
+  const segFrac = (sim.distance % SEGMENT_LENGTH_METERS) / SEGMENT_LENGTH_METERS;
 
-  // Motorcycle windshield / fairing base
-  ctx.fillStyle = '#090d16';
-  ctx.beginPath();
-  ctx.moveTo(0, h);
-  ctx.lineTo(w * 0.15, h - 90);
-  ctx.lineTo(w * 0.85, h - 90);
-  ctx.lineTo(w, h);
-  ctx.closePath();
-  ctx.fill();
+  // 2. Integrar curvatura hacia adelante desde el morro del coche hasta el horizonte (fiel al arcade)
+  const projected: {
+    i: number;
+    screenY: number;
+    leftX: number;
+    rightX: number;
+    postW: number;
+    postH: number;
+    alpha: number;
+    isFinish: boolean;
+    isCheckpoint: boolean;
+  }[] = [];
 
-  ctx.strokeStyle = '#1e293b';
-  ctx.lineWidth = 4;
-  ctx.stroke();
+  let dx = 0;
+  let curveOffset = 0;
 
-  // Headlight beam glow reflecting off front fender
-  const glowGrad = ctx.createRadialGradient(w * 0.5, centerY + 20, 10, w * 0.5, centerY + 20, 140);
-  glowGrad.addColorStop(0, 'rgba(254, 240, 138, 0.22)');
-  glowGrad.addColorStop(1, 'transparent');
-  ctx.fillStyle = glowGrad;
-  ctx.fillRect(w * 0.3, centerY - 40, w * 0.4, 120);
+  for (let i = 1; i <= DRAW_DISTANCE_SEGMENTS; i++) {
+    const worldSegIndex = baseSegIdx + i;
+    const seg = track[worldSegIndex % track.length];
 
-  // Chrome handlebars bar
-  ctx.strokeStyle = '#94a3b8';
-  ctx.lineWidth = 10;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(w * 0.18, centerY + 10);
-  ctx.lineTo(w * 0.38, centerY + 40);
-  ctx.lineTo(w * 0.62, centerY + 40);
-  ctx.lineTo(w * 0.82, centerY + 10);
-  ctx.stroke();
+    // Acumulación cuadrática hacia adelante de la curva
+    dx += seg.curve * 0.92;
+    curveOffset += dx;
 
-  // Rubber Grips
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(w * 0.14, centerY - 2, 40, 22);
-  ctx.fillRect(w * 0.86 - 40, centerY - 2, 40, 22);
+    const z = Math.max(0.35, i - segFrac);
+    // Perspectiva hiperbólica auténtica
+    const persp = 1 / (0.28 + z * 0.145);
+    const screenY = horizonY + (h * 0.68) * persp;
+    if (screenY > h + 40) continue;
 
-  ctx.fillStyle = '#334155';
-  for (let i = 0; i < 4; i++) {
-    ctx.fillRect(w * 0.14 + i * 10, centerY - 2, 4, 22);
-    ctx.fillRect(w * 0.86 - 40 + i * 10, centerY - 2, 4, 22);
+    const roadHalfW = w * 0.46 * seg.widthScale * persp;
+    // La posición del jugador desplaza la carretera en sentido opuesto; la curva desplaza el horizonte
+    const curveScreenShift = curveOffset * 2.35 * (1 - persp * 0.55);
+    const crashShake =
+      sim.crashTimer > 0 ? Math.sin(elapsedSec * 55) * 14 * sim.crashTimer : 0;
+
+    const roadCenter =
+      centerX - sim.playerX * roadHalfW + curveScreenShift + crashShake;
+
+    const postW = Math.max(2, Math.round(15 * persp));
+    const postH = Math.max(3, Math.round(36 * persp));
+    const fade = Math.min(1, Math.max(0.14, 1.12 - z / (DRAW_DISTANCE_SEGMENTS + 3)));
+
+    const segMeters = worldSegIndex * SEGMENT_LENGTH_METERS;
+    const isFinish =
+      Math.abs(segMeters - GOAL_DISTANCE_METERS) < SEGMENT_LENGTH_METERS * 0.6;
+    const isCheckpoint =
+      Math.abs(segMeters - CHECKPOINT_METERS) < SEGMENT_LENGTH_METERS * 0.6;
+
+    projected.push({
+      i: worldSegIndex,
+      screenY,
+      leftX: roadCenter - roadHalfW,
+      rightX: roadCenter + roadHalfW,
+      postW,
+      postH,
+      alpha: fade,
+      isFinish,
+      isCheckpoint,
+    });
   }
 
-  // Instrument Gauges (Speedometer & Tachometer)
-  // Left: Speedometer (0 - 120)
-  const speedX = w * 0.42;
-  const speedY = centerY + 30;
-  const radius = 34;
+  // 3. Suave cono de faros delanteros sobre el asfalto invisible cerca del parachoques
+  const beamGrad = ctx.createRadialGradient(centerX, h * 0.86, 12, centerX, h * 0.72, 230);
+  beamGrad.addColorStop(0, 'rgba(56, 189, 248, 0.08)');
+  beamGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = beamGrad;
+  ctx.fillRect(0, horizonY, w, h - horizonY);
 
-  ctx.fillStyle = '#05070d';
-  ctx.beginPath();
-  ctx.arc(speedX, speedY, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#00f3ff';
-  ctx.lineWidth = 3;
-  ctx.stroke();
+  // 4. Dibujar de atrás (horizonte) hacia adelante (cámara) los postes reflectantes blancos de Atari
+  for (let idx = projected.length - 1; idx >= 0; idx--) {
+    const p = projected[idx];
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 8px monospace';
+    // Bandera de meta o control de mitad de ruta en perspectiva
+    if (p.isFinish || p.isCheckpoint) {
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      const checkerCount = 10;
+      const span = p.rightX - p.leftX;
+      const cellW = span / checkerCount;
+      const bandH = Math.max(3, p.postH * 0.35);
+      for (let c = 0; c < checkerCount; c++) {
+        ctx.fillStyle =
+          c % 2 === 0
+            ? p.isFinish
+              ? '#facc15'
+              : '#38bdf8'
+            : '#0f172a';
+        ctx.fillRect(p.leftX + c * cellW, p.screenY - bandH * 0.5, cellW + 0.5, bandH);
+      }
+      ctx.restore();
+    }
+
+    // En el Atari Night Driver original los postes aparecen rítmicamente a ambos lados
+    ctx.save();
+    ctx.globalAlpha = p.alpha;
+
+    // Resplandor sutil de fósforo blanco/celeste en el tubo CRT
+    ctx.fillStyle = 'rgba(186, 230, 253, 0.22)';
+    ctx.fillRect(
+      Math.round(p.leftX - p.postW * 0.8),
+      Math.round(p.screenY - p.postH - 2),
+      Math.round(p.postW * 1.6),
+      Math.round(p.postH + 4)
+    );
+    ctx.fillRect(
+      Math.round(p.rightX - p.postW * 0.8),
+      Math.round(p.screenY - p.postH - 2),
+      Math.round(p.postW * 1.6),
+      Math.round(p.postH + 4)
+    );
+
+    // Poste reflectante sólido blanco puro estilo 1976
+    ctx.fillStyle = p.i % 2 === 0 ? '#ffffff' : '#dbeafe';
+    ctx.fillRect(
+      Math.round(p.leftX - p.postW * 0.5),
+      Math.round(p.screenY - p.postH),
+      p.postW,
+      p.postH
+    );
+    ctx.fillRect(
+      Math.round(p.rightX - p.postW * 0.5),
+      Math.round(p.screenY - p.postH),
+      p.postW,
+      p.postH
+    );
+    ctx.restore();
+  }
+
+  // 5. Postes dispersados al chocar
+  for (const sp of sim.scattered) {
+    ctx.save();
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(sp.rot);
+    ctx.globalAlpha = Math.max(0, sp.life / 0.55);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(-5, -14, 10, 28);
+    ctx.restore();
+  }
+
+  // 6. Marcador arcade pixelado en la franja superior del CRT (como el gabinete original de 1976)
+  ctx.save();
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = '700 22px "Silkscreen", "JetBrains Mono", monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('MPH', speedX, speedY + 14);
+  ctx.fillText(`GEAR ${sim.gear}`, w * 0.22, 36);
+  ctx.fillText(String(Math.floor(sim.score)).padStart(5, '0'), w * 0.5, 36);
+  ctx.fillText(`TIME ${String(Math.ceil(sim.timeLeft)).padStart(2, '0')}`, w * 0.78, 36);
+  if (sim.speedMultiplier > 1.05) {
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = '700 13px "JetBrains Mono", monospace';
+    ctx.fillText(`OVERDRIVE ×${sim.speedMultiplier.toFixed(2)}`, w * 0.5, 56);
+  }
+  ctx.restore();
 
-  // Needle
-  const speedAngle = -Math.PI * 0.75 + (speedMph / 120) * (Math.PI * 1.5);
-  ctx.strokeStyle = '#ef4444';
-  ctx.lineWidth = 2.5;
+  // 7. Silueta retroiluminada icónica del morro del coche de Atari Night Driver (1976)
+  const rpmVib =
+    sim.speedKmh > 3
+      ? Math.sin(elapsedSec * (26 + sim.speedKmh * 0.25)) *
+        (0.6 + (sim.speedKmh / MAX_EFFECTIVE_SPEED_KMH) * 1.4)
+      : 0;
+  const carShiftX = sim.steerInput * 18;
+  const carTilt = sim.steerInput * 0.035;
+  const boostActive = sim.speedMultiplier > 1.08;
+
+  ctx.save();
+  ctx.translate(centerX + carShiftX, h + 2 + rpmVib);
+  ctx.rotate(carTilt);
+
+  // Guardabarros izquierdo y derecho + capó central (inserto plástico translúcido celeste/ámbar 1976)
+  ctx.fillStyle = boostActive ? 'rgba(217, 119, 6, 0.34)' : 'rgba(14, 116, 144, 0.34)';
+  ctx.strokeStyle = boostActive ? '#fbbf24' : '#38bdf8';
+  ctx.lineWidth = 2.2;
+
   ctx.beginPath();
-  ctx.moveTo(speedX, speedY);
-  ctx.lineTo(speedX + Math.cos(speedAngle) * (radius - 6), speedY + Math.sin(speedAngle) * (radius - 6));
+  // Guardabarros izquierdo elevado
+  ctx.moveTo(-142, 0);
+  ctx.lineTo(-130, -54);
+  ctx.quadraticCurveTo(-112, -78, -86, -74);
+  ctx.lineTo(-64, -52);
+  // Capó central rebajado
+  ctx.lineTo(64, -52);
+  // Guardabarros derecho elevado
+  ctx.lineTo(86, -74);
+  ctx.quadraticCurveTo(112, -78, 130, -54);
+  ctx.lineTo(142, 0);
+  ctx.closePath();
+  ctx.fill();
   ctx.stroke();
 
-  // Center cap
-  ctx.fillStyle = '#f8fafc';
+  // Franjas de competición estilo Atari 1976 sobre el capó
+  ctx.strokeStyle = 'rgba(250, 204, 21, 0.78)';
+  ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(speedX, speedY, 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Right: Tachometer (0 - 10k RPM)
-  const tachX = w * 0.58;
-  const tachY = centerY + 30;
-
-  ctx.fillStyle = '#05070d';
-  ctx.beginPath();
-  ctx.arc(tachX, tachY, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#f59e0b';
-  ctx.lineWidth = 3;
+  ctx.moveTo(-22, -4);
+  ctx.lineTo(-14, -50);
+  ctx.moveTo(22, -4);
+  ctx.lineTo(14, -50);
   ctx.stroke();
 
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 8px monospace';
-  ctx.fillText('RPM x1000', tachX, tachY + 14);
-
-  const rpm = (speedMph / (gear === 'LOW' ? 55 : 110)) * 8000 + 1000;
-  const rpmAngle = -Math.PI * 0.75 + (rpm / 10000) * (Math.PI * 1.5);
-  ctx.strokeStyle = '#f59e0b';
-  ctx.lineWidth = 2.5;
+  // Volante sutil en el borde inferior de cabina
+  ctx.save();
+  ctx.translate(0, -8);
+  ctx.rotate(sim.steerInput * 0.65);
+  ctx.strokeStyle = 'rgba(226, 232, 240, 0.72)';
+  ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(tachX, tachY);
-  ctx.lineTo(tachX + Math.cos(rpmAngle) * (radius - 6), tachY + Math.sin(rpmAngle) * (radius - 6));
+  ctx.arc(0, 8, 34, Math.PI * 1.08, Math.PI * 1.92);
   ctx.stroke();
-
-  ctx.fillStyle = '#f8fafc';
-  ctx.beginPath();
-  ctx.arc(tachX, tachY, 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Gear Indicator in Center
-  ctx.fillStyle = gear === 'HIGH' ? '#f59e0b' : '#00f3ff';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText(gear, w * 0.5, centerY + 35);
+  ctx.restore();
 
   ctx.restore();
+
+  // 8. Scanlines sutiles de monitor CRT 1976
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+  for (let y = 0; y < h; y += 4) {
+    ctx.fillRect(0, y, w, 1.5);
+  }
 }

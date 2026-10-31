@@ -580,6 +580,90 @@ class RetroAudioEngine {
     });
   }
 
+  /** Interferencia y estática de radio que distorsiona y corta la transmisión. */
+  public radioInterference(finalCut = false): void {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const duration = finalCut ? 1.35 : 1.15;
+    const sampleCount = Math.max(1, Math.floor(ctx.sampleRate * duration));
+    const buffer = ctx.createBuffer(1, sampleCount, ctx.sampleRate);
+    const channel = buffer.getChannelData(0);
+    for (let i = 0; i < sampleCount; i++) {
+      const env = Math.sin((i / sampleCount) * Math.PI);
+      const burst = Math.sin(i * 0.017) > -0.35 ? 1 : 0.22;
+      channel[i] = (Math.random() * 2 - 1) * env * burst;
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1650, now);
+    filter.frequency.linearRampToValueAtTime(finalCut ? 420 : 2600, now + duration * 0.8);
+    filter.Q.setValueAtTime(1.8, now);
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.001, now);
+    noiseGain.gain.linearRampToValueAtTime(0.068, now + 0.08);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    noise.start(now);
+    noise.stop(now + duration + 0.02);
+
+    // Portadora desafinada que se quiebra al cortarse la emisora.
+    const carrier = ctx.createOscillator();
+    const carrierGain = ctx.createGain();
+    carrier.type = 'sawtooth';
+    carrier.frequency.setValueAtTime(finalCut ? 620 : 880, now);
+    carrier.frequency.exponentialRampToValueAtTime(finalCut ? 92 : 310, now + duration * 0.92);
+    carrierGain.gain.setValueAtTime(0.02, now);
+    carrierGain.gain.exponentialRampToValueAtTime(0.001, now + duration * 0.95);
+    carrier.connect(carrierGain);
+    carrierGain.connect(ctx.destination);
+    carrier.start(now);
+    carrier.stop(now + duration);
+  }
+
+  /** Pulso dimensional extraño durante la tormenta que anuncia el Reinicio Cero. */
+  public reinicioCeroStormAnomaly(): void {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const sub = ctx.createOscillator();
+    const subGain = ctx.createGain();
+    sub.type = 'sawtooth';
+    sub.frequency.setValueAtTime(118, now);
+    sub.frequency.exponentialRampToValueAtTime(38, now + 1.9);
+    subGain.gain.setValueAtTime(0.06, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 2.0);
+    sub.connect(subGain);
+    subGain.connect(ctx.destination);
+    sub.start(now);
+    sub.stop(now + 2.05);
+
+    const riftFreqs = [523.25, 466.16, 311.13, 233.08];
+    riftFreqs.forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = idx % 2 === 0 ? 'square' : 'triangle';
+      const t = now + idx * 0.14;
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.linearRampToValueAtTime(freq * 0.86, t + 0.42);
+      gain.gain.setValueAtTime(0.03, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.48);
+    });
+  }
+
   public zoneMotif(zoneId: string): void {
     const ctx = this.getContext();
     if (!ctx) return;

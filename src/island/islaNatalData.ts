@@ -154,12 +154,13 @@ export const ISLA_NATAL_CABIN = {
   /** Posición de Pixel al comenzar la partida, escuchando la radio de la mesa. */
   introSpot: { x: 300, y: 214 },
   door: { x: 240, y: 282, radius: 46 },
-  backpack: { x: 200, y: 104, radius: 50 },
+  backpack: { x: 200, y: 104, radius: 56 },
+  radio: { x: 363, y: 154, radius: 56 },
   /**
    * El cofre del abuelo descansa bajo el retrato familiar. Guarda la palanca
    * del viejo Pong y la carta que explica el Reinicio Cero.
    */
-  chest: { x: 282, y: 172, radius: 50 },
+  chest: { x: 282, y: 172, radius: 52 },
   /** Muebles que bloquean el paso dentro de la sala. */
   solids: [
     { id: 'cama', x: 30, y: 150, w: 112, h: 114 },
@@ -578,13 +579,14 @@ export const ARCADE_DIALOG_SPENT: IslaNatalDialog = {
 };
 
 export const PADDLE_DIALOG: IslaNatalDialog = {
-  title: 'La paleta',
+  title: '¡Conseguiste la Barra de Pong!',
+  subtitle: 'La arboleda · Premio del gabinete',
   paragraphs: [
-    'Apoyada contra el gabinete hay una barra blanca, lisa y tibia, del tamaño de tu antebrazo. La misma madera clara que el abuelo guardaba en el cofre.',
-    'Al levantarla no pesa. Se acomoda sola en tu mano y el aire de la isla se ordena alrededor, como si la reconociera.',
-    'Y entonces lo entiendes sin que nadie te lo explique: esto no es un trofeo. Es un medio de transporte.',
+    '¡Conseguiste la Barra de Pong!',
+    'Esta herramienta especial te permite utilizar tu tabla de surf para desplazarte sobre el agua y realizar vuelos que te ayudarán a alcanzar nuevos lugares.',
+    'Será indispensable para viajar entre las islas y continuar tu misión.',
   ],
-  hint: 'Con la paleta en la mano, el mar deja de ser un límite.',
+  hint: 'La Barra de Pong queda registrada en tu inventario y progresión.',
 };
 
 export const DEPARTURE_DIALOG: IslaNatalDialog = {
@@ -623,39 +625,35 @@ export const NATAL_STORM_QUESTION_DIALOG: IslaNatalDialog = {
 };
 
 export const NATAL_TRAVELER_DIALOG: IslaNatalDialog = {
-  title: 'El viajero',
-  subtitle: 'Frente a la cabaña',
+  title: 'Enviado del futuro',
+  subtitle: 'Frente a la casa de Pixel',
   paragraphs: [
-    'Al fin sales.',
-    'Lo que siempre temí. El Reinicio Cero ha llegado.',
-    'Sólo tú puedes devolver las memorias. Tu abuelo lo sabía, y me encargó que te entregara esto cuando llegara el día.',
-    'Es su letra: «La llave está en el cofre. La combinación es 1972».',
-    'Vuelve a la casa. Abre el cofre y lee lo que dejó para ti. Lo que hay ahí dentro despertará al viejo Pong.',
-    'No lo hagas por curiosidad. Hazlo porque el mundo lo necesita.',
+    '«Estás aquí. El ruido que escuchaste fue lo que todos temíamos en la otra dimensión. El Gran Rey Koopa ha comenzado con el Reinicio Cero.',
+    'Soy un enviado del futuro. Tu abuelo sabía que este momento llegaría y me encargó una misión: encontrarte y entregarte este código.',
+    'Tu abuelo dejó un cofre para vos dentro de esta casa. Allí encontrarás algo que necesitarás para comenzar tu misión. El código que te entrego es la llave para abrirlo.',
+    'Ahora todo depende de vos, Pixel. No tenemos mucho tiempo».',
   ],
-  hint: 'El cofre del abuelo espera bajo el retrato familiar. La combinación es 1972.',
-  lines: [
-    { speaker: 'traveler', text: 'Al fin sales.' },
-    { speaker: 'pixel', text: '¿Quién eres? ¿Qué fue ese temblor?' },
-    { speaker: 'traveler', text: 'Lo que siempre temí. El Reinicio Cero ha llegado.' },
-    { speaker: 'pixel', text: '¿El Reinicio Cero?' },
-    { speaker: 'traveler', text: 'El día en que el mundo empezó a olvidar.' },
-    { speaker: 'pixel', text: '¿Y por qué vienes a buscarme a mí?' },
-    { speaker: 'traveler', text: 'Porque sólo tú puedes devolver las memorias. Tu abuelo lo sabía.' },
-    { speaker: 'traveler', text: 'Me encargó que te entregara esto cuando llegara el día.' },
-    {
-      speaker: 'pixel',
-      text: 'Es su letra... «La llave está en el cofre. La combinación es 1972».',
-    },
-    { speaker: 'pixel', text: 'El cofre del abuelo. Siempre quise saber qué guardaba.' },
-    {
-      speaker: 'pixel',
-      text: 'Él me prometió que algún día lo descubriría. Nunca imaginé que sería así.',
-    },
-    { speaker: 'traveler', text: 'Vuelve a la casa y ábrelo. Lo que hay dentro despertará al viejo Pong.' },
-    { speaker: 'traveler', text: 'No lo hagas por curiosidad. Hazlo porque el mundo lo necesita.' },
-    { speaker: 'pixel', text: 'Entonces no pienso fallarle.' },
+  hint: `Código del cofre recibido: ${ISLA_NATAL_CHEST_CODE}. Nota de código agregada al inventario (permanente).`,
+};
+
+export const NATAL_CABIN_RADIO_SILENT_DIALOG: IslaNatalDialog = {
+  title: 'La radio de la mesa',
+  subtitle: 'Transmisión interrumpida',
+  paragraphs: [
+    'El dial sigue tibio, pero de la emisora ya solo brota un murmullo de estática vacía.',
+    'Desde los rayos del Reinicio Cero ninguna señal responde al otro lado del mar.',
   ],
+  hint: 'La transmisión quedó cortada cuando comenzó el Reinicio Cero.',
+};
+
+export const NATAL_NO_BACKPACK_EXIT_DIALOG: IslaNatalDialog = {
+  title: 'El umbral de la puerta',
+  subtitle: 'Interior de la cabaña',
+  paragraphs: [
+    'Intentas girar el picaporte, pero tus pasos se detienen en seco.',
+    '«No puedo salir sin mi mochila. Necesito llevar conmigo todo lo que encontré».',
+  ],
+  hint: 'Recoge tu mochila colgada junto a la ventana antes de salir de casa.',
 };
 
 /* ------------------------------------------------------------------ */
@@ -669,7 +667,17 @@ export const NATAL_CHEST_LOCKED_DIALOG: IslaNatalDialog = {
     'Un cofre de madera oscura y herrajes de latón, más viejo que la casa. La cerradura tiene cuatro discos numerados y ningún signo de haber sido forzada.',
     'El abuelo lo dejó aquí antes de irse. Nunca me dijo qué guardaba, sólo que lo abriría cuando llegara el momento.',
   ],
-  hint: 'Necesito la combinación. Alguien tenía que traérmela.',
+  hint: 'Necesito el código para abrirlo (puedes consultarlo en la «Nota código cofre» de tu inventario).',
+};
+
+export const NATAL_CHEST_NEEDS_BACKPACK_DIALOG: IslaNatalDialog = {
+  title: 'El cofre del abuelo',
+  subtitle: 'Preparativos antes de abrirlo',
+  paragraphs: [
+    'Tenés en la mano el código para abrir el cofre.',
+    'Antes de sacar lo que dejó tu abuelo, recogé tu mochila colgada junto a la ventana para poder llevar todo con vos.',
+  ],
+  hint: 'Recoge primero tu mochila junto a la ventana.',
 };
 
 export const NATAL_CHEST_REVEAL_DIALOG: IslaNatalDialog = {

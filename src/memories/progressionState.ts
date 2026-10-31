@@ -377,6 +377,7 @@ function deriveCoherentRpgState(
   const asteroidsDone = Boolean(games['asteroids']?.memoryUnlocked);
   const tankDone = Boolean(games['tank']?.memoryUnlocked);
   const landerDone = Boolean(games['lunar-lander']?.memoryUnlocked);
+  const nightDriverDone = Boolean(games['night-driver']?.memoryUnlocked);
   const invadersDone = Boolean(games['space-invaders']?.memoryUnlocked);
   const dkDone = Boolean(games['donkey-kong']?.memoryUnlocked);
 
@@ -401,6 +402,9 @@ function deriveCoherentRpgState(
   }
   if (landerDone) {
     items.add('item-lente-cuantica-vectorial');
+  }
+  if (nightDriverDone) {
+    items.add('item-nucleo-fotonico-nocturno');
   }
   if (invadersDone) {
     items.add('item-pase-astral-80s');
@@ -768,6 +772,18 @@ export function saveProgressState(state: PixelverseProgressState): void {
 }
 
 export function resetProgressState(): PixelverseProgressState {
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.removeItem('pixelverse_isla_natal_last_pos_v1');
+    } catch {
+      // Ignorar si almacenamiento persistente está restringido
+    }
+    try {
+      window.sessionStorage.removeItem('pixelverse_isla_natal_last_pos_v1');
+    } catch {
+      // Ignorar si sessionStorage no está disponible
+    }
+  }
   const fresh = createInitialProgressState();
   saveProgressState(fresh);
   return fresh;

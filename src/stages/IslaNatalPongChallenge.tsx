@@ -42,14 +42,16 @@ export function IslaNatalPongChallenge({
   onVictoryRef.current = onVictory;
 
   const [phase, setPhase] = useState<NatalPongPhase>('boot');
+  const [promptNoticeOpen, setPromptNoticeOpen] = useState(true);
   const [matchKey, setMatchKey] = useState(1);
   const [score, setScore] = useState({ p1: 0, p2: 0, points: 0 });
   const [goalFlash, setGoalFlash] = useState(0);
 
   useEffect(() => {
+    if (promptNoticeOpen) return;
     const t = window.setTimeout(() => setPhase('playing'), BOOT_MS);
     return () => window.clearTimeout(t);
-  }, []);
+  }, [promptNoticeOpen]);
 
   useEffect(() => {
     retroAudio.portalResonance(true);

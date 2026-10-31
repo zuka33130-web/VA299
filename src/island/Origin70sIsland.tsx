@@ -110,6 +110,7 @@ export type Island70sArrivalMode =
   | 'glitch-trail-cleared'
   | 'invaders-ship'
   | 'return-breakout'
+  | 'return-night-driver'
   | 'return-80s';
 
 export interface Origin70sIslandProps {
@@ -609,6 +610,16 @@ export function Origin70sIsland({
         y: 286,
         extReturnX: LABYRINTH_1976_ENTRANCE.returnExteriorX,
         extReturnY: LABYRINTH_1976_ENTRANCE.returnExteriorY,
+      };
+    }
+
+    if (arrivalMode === 'return-night-driver') {
+      return {
+        areaId: 'cave-gruta-cascada',
+        x: 518,
+        y: 222,
+        extReturnX: WATERFALL_SECRET_ENTRANCE.returnExteriorX,
+        extReturnY: WATERFALL_SECRET_ENTRANCE.returnExteriorY,
       };
     }
 
@@ -3108,7 +3119,8 @@ export function Origin70sIsland({
 
           // Láser ya apagado: continúa con la trama de Los Cuatro Caminos.
           const cuatroCaminosDone = st.progressState.rpg.cuatroCaminosRestored;
-          const hasTransistors =
+          const hasPhotonicCore =
+            st.progressState.rpg.inventoryItems.includes('item-nucleo-fotonico-nocturno') ||
             st.progressState.rpg.inventoryItems.includes('item-transistores-germanio') ||
             st.progressState.rpg.germaniumTransistorsDelivered ||
             st.allUnlocked;
@@ -3119,19 +3131,19 @@ export function Origin70sIsland({
               title: snpc.name,
               subtitle: 'Sala de Los Cuatro Caminos Restaurada',
               paragraphs: [
-                '«¡Gran trabajo, Arquitecto! Las cuatro cabinas (Lunar Lander, Sea Wolf, Tank y Galaxian) operan con sincronía perfecta gracias a los 3 transistores de germanio.»',
+                '«¡Gran trabajo, Arquitecto! Las cuatro cabinas (Lunar Lander, Sea Wolf, Tank y Galaxian) operan con sincronía perfecta gracias al Núcleo Fotónico de Haluro.»',
                 '«Si conquistas victorias en los cuatro gabinetes y forjas el Cartucho Maestro ORIGEN en la Cueva Glitch, el sello del portón norte al castillo de Gran Koopa se desactivará.»',
               ],
               accentHex: snpc.palette.glow,
             });
-          } else if (hasTransistors) {
+          } else if (hasPhotonicCore) {
             setActiveDialog({
               category: snpc.role.toUpperCase(),
               title: snpc.name,
-              subtitle: 'Transistores de Germanio Listos',
+              subtitle: 'Núcleo Fotónico de Haluro (1976) Listo',
               paragraphs: [
-                '«¡Extraordinario! Traes los 3 transistores de germanio de alta velocidad del circuito de Night Driver.»',
-                '«Tomaré los componentes para instalarlos en las fuentes conmutadas. Salgamos del taller: te acompañaré caminando directamente hasta la Sala de Los Cuatro Caminos para calibrar cada cabina.»',
+                '«¡Increíble, Pixel! ¡Encontraste el gabinete oculto en la gruta bajo la cascada y despertaste el Núcleo Fotónico de Haluro de Night Driver!»',
+                '«Su resonancia óptica en penumbra purgará de inmediato la corrupción entrópica de Gran Koopa. Salgamos del taller: te acompañaré caminando hasta la Sala de Los Cuatro Caminos para reactivar las cuatro cabinas.»',
               ],
               primaryAction: {
                 label: 'Iniciar Marcha Conjunta con Dylan',
@@ -3144,7 +3156,7 @@ export function Origin70sIsland({
                     710,
                     1690,
                     'down',
-                    'Dylan te acompaña físicamente. Guíalo al norte hacia Los Cuatro Caminos.'
+                    'Dylan te acompaña con el Núcleo Fotónico. Guíalo al norte hacia Los Cuatro Caminos.'
                   );
                 },
               },
@@ -3157,11 +3169,11 @@ export function Origin70sIsland({
               title: snpc.name,
               subtitle: 'Misión: Reparar Los Cuatro Caminos [Q]',
               paragraphs: [
-                '«¡Saludos, Arquitecto! Soy Dylan, técnico jefe de Retro State. Gran Koopa lanzó una sobrecarga de entropía sobre la Sala de Los Cuatro Caminos al norte y averió las fuentes de poder de las cuatro cabinas.»',
-                '«Para devolverles la vida necesito con urgencia 3 transistores de germanio de alta velocidad. Se encuentran en la costa oriental (Zona 05/08), custodiados como premio al completar la ruta nocturna en la terminal de Night Driver (1976).»',
-                '«Conduce la motocicleta hasta la meta de Night Driver, tráeme los 3 transistores, y te acompañaré a reparar Lunar Lander, Sea Wolf, Tank y Galaxian.»',
+                '«¡Saludos, Arquitecto! Soy Dylan, técnico jefe de Retro State. Gran Koopa lanzó una sobrecarga de entropía sobre la Sala de Los Cuatro Caminos al norte y dejó fuera de servicio las cuatro cabinas.»',
+                '«El único artefacto capaz de purgar esa oscuridad es el Núcleo Fotónico de Haluro (1976). Para evitar que Gran Koopa lo destruyera, ocultamos el gabinete original de Night Driver dentro de la cueva a oscuras que está debajo de la cascada, al norte en La Garganta.»',
+                '«Cruza la cortina de agua de la cascada con tu Lámpara de Fósforo [L], supera la ruta nocturna de Night Driver acelerando a fondo y tráeme el Núcleo Fotónico para restaurar Lunar Lander, Sea Wolf, Tank y Galaxian.»',
               ],
-              hint: 'Dirígete a la costa este para superar Night Driver y obtener los 3 transistores de germanio.',
+              hint: 'Cruza la cascada en La Garganta del Norte, enciende la Lámpara [L] en la cueva oscura y gana Night Driver (1976).',
               accentHex: '#f59e0b',
             });
           }
@@ -3398,10 +3410,10 @@ export function Origin70sIsland({
               title: snpc.name,
               subtitle: 'Misión Secreta: El Secreto Tras la Cascada',
               paragraphs: [
-                '«Pocos viajeros cruzan el velo de agua de La Garganta... Medito aquí custodiando el recuerdo anterior a las recreativas.»',
-                '«En el muro norte del Taller Analógico existe un ladrillo hueco que conduce a una cámara sellada de 1958. Si me muestras su Válvula luminiscente, te otorgaré una reliquia real.»',
+                '«Pocos viajeros cruzan el velo de agua de La Garganta... Medito aquí custodiando el recuerdo anterior a las recreativas y el gabinete nocturno de 1976 que Dylan ocultó en la penumbra del muro norte.»',
+                '«Además, en el muro norte del Taller Analógico existe un ladrillo hueco que conduce a una cámara sellada de 1958. Si me muestras su Válvula luminiscente, te otorgaré una reliquia real.»',
               ],
-              hint: 'Si la cueva está oscura, enciende tu Lámpara de Fósforo con [L] para ver el cofre sumergido al noreste.',
+              hint: 'Enciende tu Lámpara de Fósforo con [L] para revelar el gabinete oculto de Night Driver al norte y el cofre al este.',
               accentHex: snpc.palette.glow,
             });
           }
@@ -3729,10 +3741,10 @@ export function Origin70sIsland({
             title: 'Máquina Fuera de Servicio',
             subtitle: 'Sobrecarga de entropía provocada por Gran Koopa',
             paragraphs: [
-              'Los circuitos lógicos de este gabinete fundacional fueron saboteados por Gran Koopa.',
-              'Los custodios Rodo y Nora indican que el técnico Dylan en «Taller RS — Retro State» (al suroeste) puede reparar las cuatro máquinas si le entregas 3 transistores de germanio.',
+              'Los circuitos ópticos y lógicos de este gabinete fundacional fueron saboteados por Gran Koopa.',
+              'Los custodios Rodo y Nora indican que el técnico Dylan en «Taller RS — Retro State» (al suroeste) puede reparar las cuatro máquinas si le entregas el Núcleo Fotónico de Haluro (1976).',
             ],
-            hint: 'Consigue los 3 transistores completando la ruta de Night Driver en la costa este y habla con Dylan en el taller.',
+            hint: 'Encuentra el gabinete oculto de Night Driver en la cueva oscura debajo de la cascada, supéralo y lleva el Núcleo Fotónico a Dylan.',
             accentHex: '#f43f5e',
           });
           return;
@@ -3748,7 +3760,14 @@ export function Origin70sIsland({
       }
 
       if (target.kind === 'night-driver-cabinet') {
-        callbacksRef.current.onSavePosition(playerPosBridgeRef.current.x, playerPosBridgeRef.current.y);
+        if (activeAreaRef.current === 'exterior-70s') {
+          callbacksRef.current.onSavePosition(playerPosBridgeRef.current.x, playerPosBridgeRef.current.y);
+        } else {
+          callbacksRef.current.onSavePosition(
+            exteriorReturnPosRef.current.x,
+            exteriorReturnPosRef.current.y
+          );
+        }
         retroAudio.uiClick();
         callbacksRef.current.onEnterNightDriver?.();
         return;
@@ -4253,11 +4272,11 @@ export function Origin70sIsland({
           paragraphs = st.progressState.rpg.cuatroCaminosRestored
             ? [
                 '«¡Las cuatro pantallas han vuelto a encenderse con todo su fulgor! Lunar Lander, Sea Wolf, Tank y Galaxian... cuatro hitos que Gran Koopa intentó apagar para siempre.»',
-                '«Gracias a Dylan y a los transistores de germanio, este templo arcade vuelve a latir. ¡Prueba cada una de las cuatro cabinas cuando quieras!»',
+                '«Gracias a Dylan y al Núcleo Fotónico de Haluro que rescataste bajo la cascada, este templo arcade vuelve a latir. ¡Prueba cada cabina cuando quieras!»',
               ]
             : [
                 '«¡Saludos, Arquitecto! Gran Koopa pasó por este cruce y calcinó los circuitos de las cuatro cabinas con una sobrecarga de entropía.»',
-                '«La sala quedó completamente fuera de servicio. El único capaz de repararlas es Dylan, el técnico en «Taller RS — Retro State» (al suroeste en la aldea), pero necesitará transistores de germanio de alta velocidad.»',
+                '«La sala quedó fuera de servicio. El único capaz de purgar esa sombra es Dylan, en «Taller RS — Retro State» (al suroeste en la aldea), usando el Núcleo Fotónico de Haluro.»',
               ];
         } else if (npc.id === 'npc-operadora-nora') {
           paragraphs = st.progressState.rpg.cuatroCaminosRestored
@@ -4267,7 +4286,7 @@ export function Origin70sIsland({
               ]
             : [
                 '«Los Cuatro Caminos conectan con el gran puente al castillo de Gran Koopa al norte, pero las máquinas que alimentan el sello están apagadas.»',
-                '«Dylan en Taller RS necesita 3 transistores de germanio para reactivarlas. Se consiguen completando el desafío nocturno en la terminal de Night Driver, en la costa este.»',
+                '«Dylan ocultó el gabinete de Night Driver (1976) en la cueva a oscuras debajo de la cascada. Si superas su ruta nocturna obtendrás el Núcleo Fotónico de Haluro para reactivar esta sala.»',
               ];
         }
 
@@ -4624,7 +4643,11 @@ export function Origin70sIsland({
         '¡Puente Astral reconstruido! Cruza hacia el este para alcanzar La Fortaleza de las Oleadas (1978).'
       );
       onArrivalSequenceFinished?.();
-    } else if (arrivalMode === 'return-80s' || arrivalMode === 'return-breakout') {
+    } else if (
+      arrivalMode === 'return-80s' ||
+      arrivalMode === 'return-breakout' ||
+      arrivalMode === 'return-night-driver'
+    ) {
       onArrivalSequenceFinished?.();
     }
   }, [arrivalMode, onArrivalSequenceFinished, showToast]);
@@ -6070,21 +6093,6 @@ export function Origin70sIsland({
             );
           }
 
-          consider(
-            {
-              kind: 'pong-cabinet',
-              id: 'cabinet-pong-1972',
-              label: st.pongRestored
-                ? 'Gabinete Pong (1972) · Memoria Restaurada'
-                : 'Gabinete Arcade Pong (1972) · Meta 3 Goles',
-              actionLabel: st.pongRestored ? 'Rejugar Pong (1972)' : 'Encender Pong (1972)',
-              x: ISLAND_KEY_COORDS.pongCabinet.x,
-              y: ISLAND_KEY_COORDS.pongCabinet.y + 18,
-              accentHex: '#facc15',
-            },
-            104
-          );
-
           if (st.pongRestored) {
             consider({
               kind: 'pong-hoverboard-ride',
@@ -6157,16 +6165,6 @@ export function Origin70sIsland({
               x: arcade.x, y: arcade.y + 20, accentHex: arcade.accent,
             }, 86);
           }
-
-          consider({
-            kind: 'night-driver-cabinet',
-            id: 'cabinet-night-driver-1976',
-            label: 'Terminal Experimental · Night Driver (1976)',
-            actionLabel: 'Conducir Motocicleta Nocturna',
-            x: ISLAND_KEY_COORDS.nightDriverTerminal.x,
-            y: ISLAND_KEY_COORDS.nightDriverTerminal.y + 20,
-            accentHex: '#38bdf8',
-          }, 86);
 
           for (const arcade of [
             { id: 'asteroids', ...VOLCANIC_ARCADE_LAYOUT.asteroids, label: 'ASTEROIDS (1979)', action: 'Jugar Asteroids', accent: '#8df5db' },
@@ -6388,10 +6386,10 @@ export function Origin70sIsland({
             setActiveDialog({
               category: '¡RESTAURACIÓN HISTÓRICA! · LOS CUATRO CAMINOS',
               title: '¡Dylan ha Reparado la Sala Arcade!',
-              subtitle: '3 Transistores de Germanio Calibrados en las 4 Cabinas',
+              subtitle: 'Núcleo Fotónico de Haluro (1976) Sincronizado en las 4 Cabinas',
               paragraphs: [
-                '«¡Sincronización completada!», proclama Dylan con entusiasmo mientras ajusta los potenciómetros de las cuatro cabinas.',
-                '«Los 3 transistores de germanio de 1976 han estabilizado las fuentes de alimentación conmutadas. Las pantallas de fósforo vectorial y tubos CRT vuelven a rugir con vida.»',
+                '«¡Sincronización completada!», proclama Dylan con entusiasmo mientras acopla el Núcleo Fotónico de Haluro al distribuidor central.',
+                '«El resonador óptico rescatado bajo la cascada ha disipado toda la entropía nocturna de Gran Koopa. Las pantallas de fósforo vectorial y tubos CRT vuelven a rugir con vida.»',
                 'Las cuatro máquinas históricas están 100% operativas: Lunar Lander (1979), Sea Wolf (1976), Tank (1974) y Galaxian (1979).',
                 'Los custodios Rodo y Nora celebran la hazaña. Conquista victorias en las 4 máquinas y forja el Cartucho ORIGEN para desbloquear el portón norte hacia el castillo de Gran Koopa.',
               ],
@@ -6618,6 +6616,27 @@ export function Origin70sIsland({
               66
             );
           }
+        }
+
+        if (curArea === 'cave-gruta-cascada') {
+          const ndRestored =
+            st.allUnlocked || Boolean(st.progressState.games['night-driver']?.memoryUnlocked);
+          consider(
+            {
+              kind: 'night-driver-cabinet',
+              id: 'cabinet-night-driver-1976',
+              label: ndRestored
+                ? 'Gabinete Atari Night Driver (1976) · Núcleo Fotónico Liberado'
+                : 'Gabinete Oculto Night Driver (1976) · Custodia el Núcleo Fotónico de Haluro',
+              actionLabel: ndRestored
+                ? 'Rejugar Night Driver (1976)'
+                : 'Encender Night Driver (1976)',
+              x: 518,
+              y: 198,
+              accentHex: '#38bdf8',
+            },
+            76
+          );
         }
 
         if (curArea === 'interior-museo-viviente') {
@@ -7170,14 +7189,6 @@ export function Origin70sIsland({
             top: mapY(VILLAGE_SAVE_TERMINAL.y),
           }}
           className="absolute h-[3%] w-[1.5%] -translate-x-1/2 -translate-y-1/2 border border-black bg-[#38bdf8]"
-        />
-        <div
-          title="Pong (1972)"
-          style={{
-            left: `${(ISLAND_KEY_COORDS.pongCabinet.x / ISLAND_WORLD_W) * 100}%`,
-            top: mapY(ISLAND_KEY_COORDS.pongCabinet.y),
-          }}
-          className="absolute h-[3%] w-[1.5%] -translate-x-1/2 -translate-y-1/2 border border-black bg-[#fde047]"
         />
         <div
           title="Sendero del Glitch"

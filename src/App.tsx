@@ -497,8 +497,8 @@ export default function App() {
   );
   const [activeState, setActiveState] = useState<ViewStateId>('state-cinematic');
   const [cinematicRunKey, setCinematicRunKey] = useState<number>(1);
-  // La cinemática tiene dos actos: el prólogo cósmico (antes del avatar) y el
-  // descenso a la cabaña (después de crear la identidad).
+  const [natalSessionKey, setNatalSessionKey] = useState<number>(1);
+  // La cinemática inicial presenta el prólogo cósmico antes del menú principal.
   const [cinematicSegment, setCinematicSegment] = useState<{ start: number; end: number }>({
     start: 0,
     end: 94,
@@ -837,10 +837,9 @@ export default function App() {
     retroAudio.uiClick();
     if (pendingEncounterIntroRef.current) {
       pendingEncounterIntroRef.current = false;
-      // Acto II: descenso a la isla y entrada a la cabaña.
-      setCinematicSegment({ start: 94, end: 128 });
-      setCinematicRunKey((k) => k + 1);
-      managerRef.current?.transitionTo('state-cinematic');
+      // Partida nueva: comienza directamente dentro de la casa de Pixel en Isla Natal.
+      setIslandArrivalMode('awakening');
+      managerRef.current?.transitionTo('state-isla-natal');
       return;
     }
     const natalEvents = progressState.island70s.narrativeEvents;
@@ -1013,7 +1012,9 @@ export default function App() {
       saveFeedbackTimerRef.current = null;
     }
     setIslandArrivalMode('awakening');
-    // Partida nueva: al confirmar el avatar se reproduce el acto de la isla.
+    setNatalArrivalFromOrigen(false);
+    setNatalSessionKey((k) => k + 1);
+    // Partida nueva: al confirmar el avatar comienza directamente dentro de la casa de Pixel.
     pendingEncounterIntroRef.current = true;
     managerRef.current?.transitionTo('state-avatar');
   }, []);
@@ -1749,6 +1750,7 @@ export default function App() {
             onRecover={() => managerRef.current?.transitionTo('state-isla-natal')}
           >
             <IslaNatalStage
+              key={natalSessionKey}
               skinColor={skinColor}
               hairColor={hairColor}
               shirtColor={shirtColor}
@@ -2241,30 +2243,41 @@ export default function App() {
       </section>
 
       {/* =========================================================
-          ESTADO NIGHT DRIVER (1976) — CONDUCCIÓN NOCTURNA Y 3 TRANSISTORES
+          ESTADO NIGHT DRIVER (1976) — GRUTA TRAS LA CASCADA Y NÚCLEO FOTÓNICO
          ========================================================= */}
       <section id="state-night-driver" className="view-state z-10 px-4 py-4 arcade-hall-backdrop">
         {windowReady && activeState === 'state-night-driver' && (
           <NightDriver1976Stage
             alreadyCompleted={Boolean(progressState.games['night-driver']?.memoryUnlocked)}
             onVictory={(score: number) => {
+              const firstTime = !progressState.rpg.inventoryItems.includes(
+                'item-nucleo-fotonico-nocturno'
+              );
               setProgressState((prev) => {
                 let next = recordGameVictory(prev, 'night-driver', score, 2);
-                if (!next.rpg.inventoryItems.includes('item-transistores-germanio')) {
+                if (!next.rpg.inventoryItems.includes('item-nucleo-fotonico-nocturno')) {
                   next = {
                     ...next,
                     rpg: {
                       ...next.rpg,
-                      inventoryItems: [...next.rpg.inventoryItems, 'item-transistores-germanio'],
+                      inventoryItems: [
+                        ...next.rpg.inventoryItems,
+                        'item-nucleo-fotonico-nocturno',
+                      ],
                     },
                   };
                 }
                 return next;
               });
+              if (firstTime) {
+                setAchievementToast(
+                  '★ ARTEFACTO OBTENIDO: NÚCLEO FOTÓNICO DE HALURO (1976) · LLÉVASELO A DYLAN ★'
+                );
+              }
               window.dispatchEvent(new CustomEvent('pixelverse-shake'));
             }}
             onReturn={() => {
-              setIslandArrivalMode('standard');
+              setIslandArrivalMode('return-night-driver');
               managerRef.current?.transitionTo('state-archipelago');
             }}
           />
