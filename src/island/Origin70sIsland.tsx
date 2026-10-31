@@ -3018,27 +3018,33 @@ export function Origin70sIsland({
           const hasLakeTransistors = st.progressState.rpg.inventoryItems.includes(
             'item-transistores-germanio-lago'
           );
+          const hasTinComponents = st.progressState.rpg.inventoryItems.includes(
+            'item-componentes-estano'
+          );
           const hasSolderingIron = st.progressState.rpg.inventoryItems.includes(
             'item-soldador-estaño'
           );
+          const deliveredComponents = narrative.includes('origen-transistores-lago-entregados');
           const laserRepaired = narrative.includes('origen-laser-controles-reparados');
+          const hasBothComponents = (hasLakeTransistors && hasTinComponents) || deliveredComponents;
 
           // --- TRAMA PRINCIPAL: EL LÁSER DE SEGURIDAD Y LA PALANCA ---
           if (!laserDone) {
-            if (hasLakeTransistors) {
+            if (hasBothComponents && !hasSolderingIron && !laserRepaired) {
               setActiveDialog({
                 category: 'RETRO STATE TS · ENTREGA DE COMPONENTES',
                 title: snpc.name,
-                subtitle: 'Germanio del lago en la mochila',
+                subtitle: 'Germanio y estaño del lago en la mochila',
                 paragraphs: [
-                  '«Esos son los tres transistores del Reinicio Cero. La caja estanca los protegió del agua y del calor; las patillas siguen limpias.»',
-                  '«Con este germanio y un poco de estaño puedo devolverle la continuidad a la palanca. Tomá mi soldador de lápiz: la punta está afilada para no quemar las pistas vecinas.»',
+                  '«¡Excelente, Pixel! Recuperaste los transistores de germanio y los componentes de estaño del baúl del lago.»',
+                  '«Con estos materiales ya puedo preparar el soldador de estaño inmediatamente. Tomá mi soldador de lápiz: la punta está afilada para no quemar las pistas vecinas.»',
                 ],
                 primaryAction: {
-                  label: 'Entregar el Germanio y Recibir el Soldador',
+                  label: 'Entregar Componentes y Recibir el Soldador',
                   onSelect: () => {
                     callbacksRef.current.onConsumeInventoryItems?.([
                       'item-transistores-germanio-lago',
+                      'item-componentes-estano',
                     ]);
                     callbacksRef.current.onOpenChest('origen-dylan-soldador', [
                       'item-soldador-estaño',
@@ -3067,36 +3073,44 @@ export function Origin70sIsland({
               return;
             }
 
-            if (froggerCleared) {
+            if (laserRepaired || hasSolderingIron) {
               callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
               setActiveDialog({
                 category: snpc.role.toUpperCase(),
                 title: snpc.name,
                 subtitle: laserRepaired
                   ? 'La palanca ya tiene continuidad'
-                  : hasSolderingIron
-                    ? 'Soldador entregado · La consola espera'
-                    : 'Memoria recuperada · Falta el germanio',
+                  : 'Soldador entregado · La consola espera',
                 paragraphs: laserRepaired
                   ? [
                       '«Ya soldaste los contactos de la palanca. No queda nada que reparar: volvé a la consola y accioná la palanca para enviar la orden de apagado.»',
                       '«Los haces deberían caer por sectores. No te quedes parado sobre la línea cuando empiecen a bajar.»',
                     ]
-                  : hasSolderingIron
-                    ? [
-                        '«Ya tenés mi soldador. La consola de la palanca está al oeste de la compuerta: seis contactos, tres fríos.»',
-                        '«Calentá cada punto dañado y unilo con pulso firme. Cuando cierres la continuidad, la palanca va a responder.»',
-                      ]
-                    : [
-                        '«Recuperaste la memoria anfibia del gabinete. Eso me dice que podés devolverle la función a una máquina vieja, no sólo mirarla.»',
-                        '«Ahora necesito germanio. En la orilla opuesta del lago del bosque quedó una caja estanca con tres transistores que sobrevivieron al Reinicio Cero. El lago corta el paso directo: rodealo por el este.»',
-                      ],
+                  : [
+                      '«Ya tenés mi soldador de estaño. La consola de la palanca está al oeste de la compuerta: seis contactos, tres fríos.»',
+                      '«Calentá cada punto dañado y unilo con pulso firme. Cuando cierres la continuidad, la palanca va a responder.»',
+                    ],
                 hint: laserRepaired
                   ? 'Accioná la palanca de la consola de seguridad, al oeste de la compuerta del Sector 03.'
-                  : hasSolderingIron
-                    ? 'Volvé a la consola de la palanca y soldá los contactos fríos con [E].'
-                    : 'Bajá por el este del lago, cruzá a la orilla opuesta y abrí la caja estanca.',
-                accentHex: laserRepaired || hasSolderingIron ? '#22c55e' : '#fb923c',
+                  : 'Volvé a la consola de la palanca y soldá los contactos fríos con [E].',
+                accentHex: '#22c55e',
+              });
+              return;
+            }
+
+            if (froggerCleared) {
+              callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
+              setActiveDialog({
+                category: snpc.role.toUpperCase(),
+                title: snpc.name,
+                subtitle: 'Superaste Frogger · Abrí el cofre del lago',
+                paragraphs: [
+                  '«¡Superaste el desafío del Cruce de Circuitos! Al llegar al centro del lago, el cofre se ha revelado.»',
+                  '«Abrí el baúl para recuperar los 3 transistores de germanio y los componentes de estaño que dejé allí antes del Reinicio Cero.»',
+                  '«Cuando los tengas en la mochila, traémelos y prepararé el soldador de estaño para reparar la palanca de seguridad.»',
+                ],
+                hint: 'Avanzá hacia el cofre en el centro del lago, abrilo para recoger el germanio y el estaño, y volvé con Dylan.',
+                accentHex: '#fb923c',
               });
               return;
             }
@@ -3105,13 +3119,13 @@ export function Origin70sIsland({
             setActiveDialog({
               category: snpc.role.toUpperCase(),
               title: snpc.name,
-              subtitle: 'El láser no es un enemigo',
+              subtitle: 'Necesito transistores de germanio y estaño',
               paragraphs: [
-                '«Ese muro de luz que corta el paso al Sector 03 no lo puso nadie para castigar a los viajeros. Es el sistema de seguridad de una instalación antigua, y se activó solo cuando el Reinicio Cero sacudió la isla.»',
-                '«Las ondas expansivas fundieron parte del mecanismo electrónico de la palanca que debería apagarlo. Puedo repararla, pero necesito estaño y germanio de repuesto… y antes quiero comprobar algo.»',
-                '«En el claro del bosque hay un gabinete de cruce de canales que sobrevivió al Reinicio. Si lográs recuperar esa memoria de videojuego, sabré que podés devolverle la función a la palanca sin romperla.»',
+                '«Necesito reparar la palanca de seguridad, pero tengo un problema. Me faltan transistores de germanio y estaño. Antes del Reinicio Cero podía conseguirlos, pero desde que ocurrió todo, los suministros dejaron de llegar.»',
+                '«Hay un baúl del otro lado del lago del bosque. Creo que todavía están allí los componentes que necesito. Si lográs recuperarlos, podré preparar el soldador y reparar el mecanismo.»',
+                '«Cerca del lago verás el gabinete Frogger «Cruce de Circuitos». Al jugar, cruzarás hacia el centro del lago donde se visualiza el cofre con los componentes.»',
               ],
-              hint: 'Encontrá el gabinete «Cruce de Circuitos» en el bosque, al este del taller, y superá la memoria anfibia de 1979.',
+              hint: 'Encontrá el gabinete Frogger cerca del lago del bosque, superá el desafío para revelar el cofre y recuperá los transistores y el estaño.',
               accentHex: '#fb923c',
             });
             return;

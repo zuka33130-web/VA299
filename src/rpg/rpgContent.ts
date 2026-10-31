@@ -415,8 +415,20 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     accentHex: '#fb923c',
     shortCode: 'TR-LAGO',
     description:
-      'Tres semiconductores de germanio que sobrevivieron al Reinicio Cero dentro de una caja estanca, en la orilla opuesta del lago del bosque. Sus patillas siguen limpias: Dylan puede devolverles la función.',
+      'Tres semiconductores de germanio que sobrevivieron al Reinicio Cero dentro de una caja estanca, en el lago del bosque. Dylan los necesita para preparar el soldador de estaño.',
     usageHint: 'Llévaselos al técnico Dylan en el Taller Retro State TS del bosque.',
+    usableAction: 'inspect',
+  },
+  'item-componentes-estano': {
+    id: 'item-componentes-estano',
+    name: 'Componentes de Estaño',
+    category: 'pieza-arcade',
+    categoryLabel: 'MATERIAL DE SOLDADURA',
+    accentHex: '#94a3b8',
+    shortCode: 'ESTAÑO',
+    description:
+      'Componentes de estaño de alta pureza hallados en el baúl del lago del bosque. Esenciales junto a los transistores de germanio para que Dylan prepare el soldador.',
+    usageHint: 'Llévaselos al técnico Dylan en el Taller Retro State TS.',
     usableAction: 'inspect',
   },
   'item-soldador-estaño': {
@@ -1112,28 +1124,29 @@ export const RPG_QUESTS: RpgQuestSpec[] = [
     decadeTag: 'BOSQUE DE LAS SEÑALES · PASO AL SECTOR 03',
     accentHex: '#fb923c',
     summary:
-      'El láser que sella el paso al Sector 03 se activó solo como sistema de seguridad después del Reinicio Cero. Sus haces no son un enemigo: son una alarma. La palanca que debería apagarlos perdió sus contactos electrónicos, y Dylan necesita germanio y estaño para devolverle la voz.',
+      'El láser que sella el paso al Sector 03 se activó tras el Reinicio Cero. Dylan necesita transistores de germanio y componentes de estaño para preparar el soldador y reparar la palanca. Los materiales aguardan en un baúl del otro lado del lago del bosque, tras superar el desafío de Frogger.',
     steps: [
       {
-        label: 'Escuchar a Dylan en el Taller Retro State TS',
+        label: 'Hablar con Dylan en el Taller Retro State TS',
         isDone: (st, all) =>
           all ||
           st.island70s.talkedNpcIds.includes('npc-dylan-tecnico') ||
           st.rpg.questStates['quest-laser-seguridad'] !== undefined,
       },
       {
-        label: 'Superar la memoria anfibia del gabinete «Cruce de Circuitos»',
+        label: 'Superar el desafío del gabinete Frogger cerca del lago del bosque',
         isDone: (st, all) => all || Boolean(st.games['frogger']?.memoryUnlocked),
       },
       {
-        label: 'Recuperar los transistores de germanio al otro lado del lago',
+        label: 'Abrir el cofre del lago y obtener los transistores de germanio y componentes de estaño',
         isDone: (st, all) =>
           all ||
-          st.rpg.inventoryItems.includes('item-transistores-germanio-lago') ||
+          (st.rpg.inventoryItems.includes('item-transistores-germanio-lago') &&
+            st.rpg.inventoryItems.includes('item-componentes-estano')) ||
           st.island70s.narrativeEvents.includes('origen-transistores-lago-entregados'),
       },
       {
-        label: 'Entregar el germanio a Dylan y recibir el soldador de estaño',
+        label: 'Entregar los componentes a Dylan y recibir el soldador de estaño',
         isDone: (st, all) =>
           all || st.island70s.narrativeEvents.includes('origen-soldador-entregado'),
       },
@@ -1148,8 +1161,8 @@ export const RPG_QUESTS: RpgQuestSpec[] = [
           all || st.island70s.narrativeEvents.includes('origen-laser-desactivado'),
       },
     ],
-    rewardSummary: 'Paso al Sector 03 abierto + 3 transistores recuperados',
-    rewardItemIds: [],
+    rewardSummary: 'Paso al Sector 03 abierto + Soldador de Estaño de Dylan',
+    rewardItemIds: ['item-soldador-estaño'],
   },
   {
     id: 'quest-instalacion-oculta',
@@ -2107,7 +2120,7 @@ export const RPG_CHESTS: RpgChestSpec[] = [
     x: 720,
     y: 1458,
     accentHex: '#fb923c',
-    rewardItemIds: ['item-transistores-germanio-lago'],
+    rewardItemIds: ['item-transistores-germanio-lago', 'item-componentes-estano'],
   },
   {
     id: 'chest-faro-lente',
