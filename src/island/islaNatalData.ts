@@ -107,15 +107,162 @@ export const ISLA_NATAL_WALK_RECTS: IslaNatalWalkRect[] = [
   { id: 'g-arboleda', x: 1090, y: 480, w: 282, h: 222, zone: 'arboleda-arcade', surface: 'grass' },
   { id: 'g-approach-rocas', x: 380, y: 520, w: 182, h: 182, zone: 'pradera-casa', surface: 'grass' },
 
-  // Senderos de tierra
-  { id: 'p-playa', x: 740, y: 760, w: 64, h: 172, zone: 'playa-aurora', surface: 'path' },
-  { id: 'p-casa', x: 540, y: 724, w: 212, h: 48, zone: 'pradera-casa', surface: 'path' },
-  { id: 'p-arboleda', x: 800, y: 600, w: 332, h: 52, zone: 'pradera-casa', surface: 'path' },
-  { id: 'p-rocas', x: 470, y: 560, w: 162, h: 48, zone: 'pradera-casa', surface: 'path' },
+  // Red de caminos conectada según los trayectos reales de la isla
+  { id: 'p-playa-crucero', x: 752, y: 718, w: 58, h: 242, zone: 'playa-aurora', surface: 'path' },
+  { id: 'p-casa-umbral', x: 492, y: 790, w: 118, h: 36, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-casa-crucero', x: 580, y: 726, w: 218, h: 66, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-crucero-puerto', x: 778, y: 502, w: 62, h: 244, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-tramo-arboleda', x: 798, y: 558, w: 378, h: 62, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-codo-arcade', x: 1144, y: 562, w: 36, h: 116, zone: 'arboleda-arcade', surface: 'path' },
+  { id: 'p-plaza-arcade', x: 1152, y: 642, w: 136, h: 40, zone: 'arboleda-arcade', surface: 'path' },
+  { id: 'p-ramal-mirador-1', x: 1068, y: 584, w: 78, h: 214, zone: 'mirador-oleaje', surface: 'path' },
+  { id: 'p-ramal-mirador-2', x: 1110, y: 768, w: 86, h: 74, zone: 'mirador-oleaje', surface: 'path' },
+  { id: 'p-ramal-rocas-1', x: 618, y: 558, w: 56, h: 196, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-ramal-rocas-2', x: 460, y: 550, w: 196, h: 50, zone: 'pradera-casa', surface: 'path' },
+  { id: 'p-subida-rocas', x: 430, y: 318, w: 50, h: 258, zone: 'alto-rocas', surface: 'path' },
 
   // Alto rocoso
   { id: 'r-meseta', x: 300, y: 340, w: 282, h: 202, zone: 'alto-rocas', surface: 'rock' },
   { id: 'r-cresta', x: 360, y: 280, w: 172, h: 82, zone: 'alto-rocas', surface: 'rock' },
+];
+
+export type IslaNatalPathTextureId =
+  | 'terracotta'
+  | 'coastal'
+  | 'port'
+  | 'arboleda'
+  | 'highland';
+
+export interface IslaNatalPathRoute {
+  id: string;
+  texture: IslaNatalPathTextureId;
+  width: number;
+  points: [number, number][];
+  featherStart?: boolean;
+  featherEnd?: boolean;
+}
+
+export interface IslaNatalPathPlaza {
+  id: string;
+  x: number;
+  y: number;
+  rx: number;
+  ry: number;
+  texture: IslaNatalPathTextureId;
+}
+
+/**
+ * Red orgánica de caminos empedrados según cada trayecto de Isla Natal:
+ * - Playa del Aurora -> Crucero Central (canto rodado costero)
+ * - Umbral de Casa de Pixel -> Crucero Central (laja cálida de arenisca/terracota)
+ * - Crucero Central -> Muelle del Puerto Norte (piedra caliza portuaria)
+ * - Crucero Norte -> La Arboleda y Cobertizo de Pong (laja musgosa de bosque)
+ * - Bifurcación Este -> Mirador del Oleaje (paso costero hacia la punta)
+ * - Bifurcación Oeste -> Alto de las Rocas y Mirador (empedrado rústico de montaña)
+ */
+export const ISLA_NATAL_PATH_ROUTES: IslaNatalPathRoute[] = [
+  {
+    id: 'sendero-playa-crucero',
+    texture: 'coastal',
+    width: 36,
+    points: [
+      [784, 956],
+      [772, 926],
+      [774, 868],
+      [782, 796],
+      [782, 744],
+    ],
+    featherStart: true,
+    featherEnd: true,
+  },
+  {
+    id: 'sendero-ramal-mirador',
+    texture: 'port',
+    width: 28,
+    points: [
+      [1092, 586],
+      [1092, 634],
+      [1082, 684],
+      [1126, 736],
+      [1140, 790],
+      [1174, 824],
+    ],
+    featherStart: true,
+    featherEnd: true,
+  },
+  {
+    id: 'sendero-ramal-alto-rocas',
+    texture: 'highland',
+    width: 30,
+    points: [
+      [644, 754],
+      [646, 672],
+      [634, 592],
+      [588, 578],
+      [486, 574],
+      [462, 520],
+      [454, 434],
+      [452, 362],
+      [450, 326],
+    ],
+    featherStart: true,
+    featherEnd: true,
+  },
+  {
+    id: 'sendero-arboleda-arcade',
+    texture: 'arboleda',
+    width: 30,
+    points: [
+      [808, 600],
+      [900, 594],
+      [1002, 588],
+      [1092, 585],
+      [1160, 590],
+      [1162, 648],
+      [1210, 660],
+      [1268, 662],
+    ],
+    featherStart: true,
+    featherEnd: false,
+  },
+  {
+    id: 'sendero-crucero-puerto',
+    texture: 'port',
+    width: 34,
+    points: [
+      [782, 744],
+      [796, 672],
+      [808, 600],
+      [818, 556],
+      [820, 518],
+    ],
+    featherStart: true,
+    featherEnd: false,
+  },
+  {
+    id: 'sendero-casa-crucero',
+    texture: 'terracotta',
+    width: 32,
+    points: [
+      [508, 800],
+      [542, 808],
+      [592, 806],
+      [644, 756],
+      [714, 746],
+      [782, 744],
+    ],
+    featherStart: false,
+    featherEnd: false,
+  },
+];
+
+export const ISLA_NATAL_PATH_PLAZAS: IslaNatalPathPlaza[] = [
+  { id: 'plaza-umbral-casa', x: 510, y: 798, rx: 22, ry: 14, texture: 'terracotta' },
+  { id: 'plaza-crucero-central', x: 782, y: 744, rx: 28, ry: 22, texture: 'terracotta' },
+  { id: 'plaza-crucero-norte', x: 808, y: 600, rx: 23, ry: 19, texture: 'port' },
+  { id: 'plaza-cabecera-muelle', x: 820, y: 520, rx: 22, ry: 13, texture: 'port' },
+  { id: 'plaza-cobertizo-arcade', x: 1248, y: 662, rx: 36, ry: 19, texture: 'arboleda' },
+  { id: 'plaza-mirador-rocas', x: 450, y: 322, rx: 26, ry: 14, texture: 'highland' },
 ];
 
 export const ISLA_NATAL_SOLIDS: IslaNatalSolidRect[] = [
@@ -752,14 +899,12 @@ export interface IslaNatalTreeSpec {
 
 /** Árboles artesanales del motor de Isla Orígenes: robles de bosque/pradera y pinos. */
 export const ISLA_NATAL_TREES: IslaNatalTreeSpec[] = [
-  { x: 1124, y: 672, variant: 'forest' },
-  { x: 1152, y: 688, variant: 'forest' },
-  { x: 1136, y: 654, variant: 'forest' },
+  { x: 1124, y: 672, variant: 'meadow' },
+  { x: 1136, y: 654, variant: 'meadow' },
   { x: 1352, y: 678, variant: 'pine' },
   { x: 1360, y: 642, variant: 'pine' },
-  { x: 470, y: 720, variant: 'forest' },
-  { x: 560, y: 540, variant: 'forest' },
-  { x: 720, y: 520, variant: 'forest' },
+  { x: 470, y: 720, variant: 'pine' },
+  { x: 720, y: 520, variant: 'pine' },
   { x: 960, y: 540, variant: 'meadow' },
 ];
 
@@ -786,5 +931,5 @@ function scatter(
 
 export const ISLA_NATAL_TUFTS: DecorPoint[] = scatter(210, ['grass'], 11);
 export const ISLA_NATAL_FLOWERS: DecorPoint[] = scatter(72, ['grass'], 29);
-export const ISLA_NATAL_PEBBLES: DecorPoint[] = scatter(120, ['sand', 'path', 'rock'], 47);
+export const ISLA_NATAL_PEBBLES: DecorPoint[] = scatter(105, ['sand', 'rock'], 47);
 export const ISLA_NATAL_SHELLS: DecorPoint[] = scatter(34, ['sand'], 83);

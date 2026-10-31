@@ -816,7 +816,7 @@ export function Origin70sIsland({
     setDialogueVisibleChars(0);
     let shown = 0;
     const timer = window.setInterval(() => {
-      shown = Math.min(dialogueFullText.length, shown + 3);
+      shown = Math.min(dialogueFullText.length, shown + 1);
       setDialogueVisibleChars(shown);
       if (shown >= dialogueFullText.length) window.clearInterval(timer);
     }, 18);

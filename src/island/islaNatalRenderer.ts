@@ -18,7 +18,6 @@ import type { AvatarAppearance } from '../avatar/avatarOptions';
 import type { FacingDirection } from '../rpg/rpgContent';
 import {
   drawPixelAvatar4Dir,
-  drawHandcraftedTree,
   drawGbcWoodenSign,
   drawPongHoverboard,
   drawRpgTreasureChest,
@@ -31,6 +30,8 @@ import {
   ISLA_NATAL_DEPARTURE,
   ISLA_NATAL_FLOWERS,
   ISLA_NATAL_PALMS,
+  ISLA_NATAL_PATH_PLAZAS,
+  ISLA_NATAL_PATH_ROUTES,
   ISLA_NATAL_PEBBLES,
   ISLA_NATAL_SHELLS,
   ISLA_NATAL_SIGNS,
@@ -42,6 +43,9 @@ import {
   ISLA_NATAL_WORLD_H,
   ISLA_NATAL_WORLD_W,
   isIslaNatalPointOnLand,
+  type IslaNatalPathPlaza,
+  type IslaNatalPathRoute,
+  type IslaNatalPathTextureId,
   type IslaNatalSurface,
   type IslaNatalWalkRect,
 } from './islaNatalData';
@@ -146,11 +150,318 @@ function hash2(x: number, y: number): number {
   return (h >>> 0) / 4294967295;
 }
 
-function pointOnLand(x: number, y: number): boolean {
-  for (const r of ISLA_NATAL_WALK_RECTS) {
-    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return true;
+/* ------------------------------------------------------------------ */
+/* GEOMETRÍA ORGÁNICA DE LA ISLA: CONTORNOS ASIMÉTRICOS Y PLAYAS       */
+/* ------------------------------------------------------------------ */
+
+type Vec2 = readonly [number, number];
+
+function catmullRom1D(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  );
+}
+
+/** Subdivide un polígono cerrado de control en una curva orgánica suave sin esquinas duras. */
+function subdivideClosedCatmullRom(
+  control: readonly Vec2[],
+  samplesPerSegment = 9
+): [number, number][] {
+  const n = control.length;
+  if (n < 3) return control.map((p) => [p[0], p[1]]);
+  const out: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = control[(i - 1 + n) % n];
+    const p1 = control[i];
+    const p2 = control[(i + 1) % n];
+    const p3 = control[(i + 2) % n];
+    for (let s = 0; s < samplesPerSegment; s++) {
+      const t = s / samplesPerSegment;
+      out.push([
+        catmullRom1D(p0[0], p1[0], p2[0], p3[0], t),
+        catmullRom1D(p0[1], p1[1], p2[1], p3[1], t),
+      ]);
+    }
   }
-  return false;
+  return out;
+}
+
+function tracePolygonRing(ctx: CanvasRenderingContext2D, ring: readonly Vec2[]): void {
+  if (ring.length === 0) return;
+  ctx.moveTo(ring[0][0], ring[0][1]);
+  for (let i = 1; i < ring.length; i++) {
+    ctx.lineTo(ring[i][0], ring[i][1]);
+  }
+  ctx.closePath();
+}
+
+function pointInPolygonRing(x: number, y: number, ring: readonly Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 1e-9) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Silueta exterior artesanal de Isla Natal (sentido horario desde Puerto Norte):
+ * combina bahías abrigadas, penínsulas asimétricas, cabos rocosos, ensenadas
+ * curvas y lenguas de arena formadas por la erosión del mar.
+ */
+const NATAL_ISLAND_CONTROL_POINTS: readonly Vec2[] = [
+  // Bahía del Puerto Norte (abraza el arranque del muelle de madera en x ≈ 820, y ≈ 500)
+  [772, 488],
+  [820, 498],
+  [868, 490],
+  // Punta de la Brisa y Caleta del Norte (sustituye la muesca cuadrada norte por una caleta curva)
+  [922, 484],
+  [976, 484],
+  [1008, 494],
+  [1026, 526],
+  [1048, 546],
+  [1072, 518],
+  [1088, 472],
+  // Península de la Arboleda (doble lóbulo boscoso asimétrico al noreste y este)
+  [1136, 444],
+  [1206, 430],
+  [1284, 442],
+  [1356, 436],
+  [1416, 470],
+  [1436, 528],
+  [1404, 582],
+  [1434, 644],
+  [1398, 704],
+  [1318, 728],
+  [1238, 722],
+  // Ensenada del Este y Punta del Oleaje (bahía turquesa profunda + cabo arenoso curvo al sureste)
+  [1180, 732],
+  [1224, 748],
+  [1288, 758],
+  [1328, 804],
+  [1312, 860],
+  [1270, 892],
+  [1208, 906],
+  [1174, 960],
+  [1108, 958],
+  [1052, 982],
+  // Playa del Aurora (doble punta arenosa asimétrica y bahía curva central)
+  [1028, 1020],
+  [962, 1050],
+  [886, 1034],
+  [810, 1020],
+  [738, 1032],
+  [664, 1050],
+  [592, 1020],
+  // Boca y Caleta del Poniente + Loma de la Cabaña (costa oeste escalonada por erosión natural)
+  [582, 968],
+  [520, 962],
+  [462, 948],
+  [454, 892],
+  [418, 882],
+  [374, 812],
+  [360, 742],
+  [370, 700],
+  [338, 634],
+  [364, 572],
+  // Promontorio del Alto de las Rocas (acantilados quebrados al noroeste)
+  [290, 548],
+  [254, 492],
+  [276, 428],
+  [254, 366],
+  [292, 330],
+  [344, 320],
+  [350, 272],
+  [416, 242],
+  [494, 250],
+  [544, 274],
+  [564, 324],
+  [596, 344],
+  [610, 422],
+  // Caleta de las Rocas y Cabo de las Palmas (saliente norte al oeste del puerto)
+  [596, 488],
+  [628, 482],
+  [678, 442],
+  [734, 458],
+];
+
+/** Pequeños escollos y cayos costeros desgastados por el oleaje frente a los cabos. */
+const NATAL_COASTAL_SKERRIES: readonly { surface: IslaNatalSurface; points: readonly Vec2[] }[] = [
+  {
+    surface: 'rock',
+    points: [
+      [218, 342],
+      [232, 333],
+      [246, 338],
+      [244, 352],
+      [228, 357],
+      [216, 350],
+    ],
+  },
+  {
+    surface: 'rock',
+    points: [
+      [372, 222],
+      [385, 216],
+      [396, 222],
+      [392, 232],
+      [378, 234],
+    ],
+  },
+  {
+    surface: 'sand',
+    points: [
+      [1338, 824],
+      [1354, 818],
+      [1368, 827],
+      [1364, 840],
+      [1346, 843],
+      [1335, 834],
+    ],
+  },
+  {
+    surface: 'rock',
+    points: [
+      [420, 956],
+      [433, 949],
+      [444, 956],
+      [440, 967],
+      [425, 968],
+    ],
+  },
+];
+
+/**
+ * Contorno curvo de la pradera interior: se retira tierra adentro frente a las
+ * bahías para formar playas curvas naturales y deja una fina ribera orgánica en los cabos.
+ */
+const NATAL_MEADOW_CONTROL_POINTS: readonly Vec2[] = [
+  // Media luna de arena del Puerto Norte
+  [756, 478],
+  [786, 507],
+  [820, 516],
+  [856, 507],
+  // Ribera norte y playa escondida de Caleta del Norte
+  [906, 496],
+  [974, 496],
+  [1008, 508],
+  [1048, 562],
+  [1088, 502],
+  // Península de la Arboleda (ribera boscosa con estrecho margen costero)
+  [1138, 458],
+  [1206, 444],
+  [1284, 454],
+  [1352, 450],
+  [1404, 480],
+  [1420, 530],
+  [1390, 582],
+  [1418, 642],
+  [1384, 690],
+  [1314, 714],
+  [1238, 710],
+  // Transición curva continua hacia Punta del Oleaje y Ensenada Este (sin esquinas de 90°)
+  [1184, 730],
+  [1168, 766],
+  [1138, 808],
+  [1094, 848],
+  [1038, 876],
+  // Arco curvo de Playa del Aurora (abraza la pasarela de madera en x = 740..804, y = 912)
+  [982, 896],
+  [926, 912],
+  [864, 922],
+  [804, 914],
+  [742, 914],
+  [682, 918],
+  [622, 902],
+  // Playa curva de Caleta del Poniente y subida por Loma de la Cabaña
+  [568, 872],
+  [514, 848],
+  [458, 856],
+  [428, 862],
+  [390, 804],
+  [376, 740],
+  [384, 696],
+  [354, 634],
+  [378, 572],
+  // Encuentro bajo el Alto de las Rocas y Caleta de las Rocas
+  [430, 524],
+  [558, 524],
+  [594, 510],
+  [628, 498],
+  [680, 458],
+  [730, 470],
+];
+
+/** Meseta rocosa orgánica del Alto de las Rocas (elimina el bloque rectangular noroeste). */
+const NATAL_ROCK_PLATEAU_CONTROL_POINTS: readonly Vec2[] = [
+  [348, 266],
+  [416, 238],
+  [494, 246],
+  [546, 270],
+  [568, 322],
+  [600, 344],
+  [614, 422],
+  [598, 486],
+  [584, 514],
+  [562, 536],
+  [528, 545],
+  [494, 539],
+  [470, 538],
+  [448, 540],
+  [410, 547],
+  [364, 539],
+  [320, 546],
+  [284, 546],
+  [248, 492],
+  [272, 428],
+  [248, 366],
+  [288, 328],
+  [340, 318],
+];
+
+/** Terraza superior curva donde se asienta el Mirador del Alto de las Rocas. */
+const NATAL_ROCK_CREST_CONTROL_POINTS: readonly Vec2[] = [
+  [354, 270],
+  [418, 244],
+  [492, 252],
+  [538, 276],
+  [542, 322],
+  [524, 354],
+  [488, 362],
+  [452, 358],
+  [412, 364],
+  [364, 356],
+  [334, 336],
+  [342, 302],
+];
+
+const NATAL_ISLAND_RING = subdivideClosedCatmullRom(NATAL_ISLAND_CONTROL_POINTS, 9);
+const NATAL_SKERRY_RINGS = NATAL_COASTAL_SKERRIES.map((s) => ({
+  surface: s.surface,
+  ring: subdivideClosedCatmullRom(s.points, 7),
+}));
+const NATAL_MEADOW_RING = subdivideClosedCatmullRom(NATAL_MEADOW_CONTROL_POINTS, 9);
+const NATAL_ROCK_PLATEAU_RING = subdivideClosedCatmullRom(NATAL_ROCK_PLATEAU_CONTROL_POINTS, 8);
+const NATAL_ROCK_CREST_RING = subdivideClosedCatmullRom(NATAL_ROCK_CREST_CONTROL_POINTS, 7);
+
+function pointOnLand(x: number, y: number): boolean {
+  return pointInPolygonRing(x, y, NATAL_ISLAND_RING);
+}
+
+function isPointOnNatalMeadow(x: number, y: number): boolean {
+  if (!pointInPolygonRing(x, y, NATAL_MEADOW_RING)) return false;
+  if (pointInPolygonRing(x, y, NATAL_ROCK_PLATEAU_RING)) return false;
+  return pointInPolygonRing(x, y, NATAL_ISLAND_RING);
 }
 
 /* ------------------------------------------------------------------ */
@@ -158,41 +469,25 @@ function pointOnLand(x: number, y: number): boolean {
 /* ------------------------------------------------------------------ */
 
 const GROUND_PAD = 96;
-const COAST_STEP = 4;
-const SHELF_RANGE = 86;
+const COAST_STEP = 2;
+const SHELF_RANGE = 104;
 
-const SURFACE_BASE: Record<IslaNatalSurface, string> = {
-  sand: '#e6d19b',
-  grass: '#4a8f3f',
-  path: '#b28d5c',
-  rock: '#8b8577',
-};
+const SURFACE_CODE_SAND = 0;
+const SURFACE_CODE_GRASS = 1;
+const SURFACE_CODE_ROCK = 2;
 
-const SURFACE_LIGHT: Record<IslaNatalSurface, string> = {
-  sand: '#f4e2ae',
-  grass: '#79c96a',
-  path: '#d8bd8c',
-  rock: '#c2b9a5',
-};
-
-const SURFACE_WET: Record<IslaNatalSurface, string> = {
-  sand: '#a9854f',
-  grass: '#366b31',
-  path: '#8d6b42',
-  rock: '#5f5a50',
-};
-
-/** Campo de distancia a la tierra caminable: permite costas orgánicas y rompiente real. */
+/** Campo de distancia a la silueta orgánica: controla costa erosionada, bajío y rompiente. */
 interface NatalCoastField {
   cols: number;
   rows: number;
   pad: number;
   step: number;
-  /** Distancia (en celdas) desde cualquier punto hasta la tierra caminable. */
+  /** Distancia (en celdas) desde el mar hasta la orilla erosionada. */
   dist: Float32Array;
-  /** Distancia (en celdas) desde la tierra hacia el agua: define la orla de marea. */
+  /** Distancia (en celdas) desde la tierra hacia el mar: define la orla húmeda de marea. */
   inDist: Float32Array;
-  rectIndex: Int16Array;
+  /** Superficie costera más próxima: 0 = arena, 1 = césped, 2 = roca. */
+  surface: Uint8Array;
 }
 
 interface NatalFoamPoint {
@@ -204,56 +499,379 @@ interface NatalFoamPoint {
   seed: number;
 }
 
-let coastField: NatalCoastField | null = null;
-let coastGroundLayer: HTMLCanvasElement | null = null;
-let coastFoam: NatalFoamPoint[] = [];
-
-/** Borde irregular de la costa (en píxeles) para que la isla no parezca de rectángulos. */
-function coastEdgeExtra(wx: number, wy: number): number {
-  const a = Math.sin(wx * 0.019 + Math.sin(wy * 0.014) * 2.2);
-  const b = Math.sin(wy * 0.027 + wx * 0.011 + 1.7);
-  const c = Math.sin((wx + wy) * 0.047 + 2.4);
-  const n = hash2(Math.floor(wx / 7) + 17, Math.floor(wy / 7) - 23) - 0.5;
-  return Math.max(0.6, Math.min(16, 6.4 + a * 3.8 + b * 3 + c * 1.6 + n * 3));
+interface NatalGrassTiles {
+  base: HTMLImageElement | null;
+  clover: HTMLImageElement | null;
+  sunlit: HTMLImageElement | null;
+  mask: number;
 }
 
-function buildCoastField(): NatalCoastField {
-  const pad = GROUND_PAD;
-  const step = COAST_STEP;
-  const cols = Math.ceil((ISLA_NATAL_WORLD_W + pad * 2) / step) + 1;
-  const rows = Math.ceil((ISLA_NATAL_WORLD_H + pad * 2) / step) + 1;
-  const dist = new Float32Array(cols * rows);
-  const inDist = new Float32Array(cols * rows);
-  const rectIndex = new Int16Array(cols * rows);
-  dist.fill(9999);
-  rectIndex.fill(-1);
+interface NatalPathTiles {
+  images: Record<IslaNatalPathTextureId, HTMLImageElement | null>;
+  mask: number;
+}
 
-  for (let cy = 0; cy < rows; cy++) {
-    for (let cx = 0; cx < cols; cx++) {
-      const wx = cx * step - pad + step * 0.5;
-      const wy = cy * step - pad + step * 0.5;
-      for (let i = ISLA_NATAL_WALK_RECTS.length - 1; i >= 0; i--) {
-        const r = ISLA_NATAL_WALK_RECTS[i];
-        if (wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h) {
-          dist[cy * cols + cx] = 0;
-          rectIndex[cy * cols + cx] = i;
-          break;
-        }
+const NATAL_PATH_TILE_SOURCES: Record<IslaNatalPathTextureId, string> = {
+  terracotta: '/assets/pixelverse/natal-path-terracotta.png',
+  coastal: '/assets/pixelverse/natal-path-coastal.png',
+  port: '/assets/pixelverse/natal-path-port.png',
+  arboleda: '/assets/pixelverse/natal-path-arboleda.png',
+  highland: '/assets/pixelverse/natal-path-highland.png',
+};
+
+const NATAL_PATH_FALLBACK_HEX: Record<IslaNatalPathTextureId, string> = {
+  terracotta: '#b89464',
+  coastal: '#bcae8e',
+  port: '#c4ba9c',
+  arboleda: '#6e765c',
+  highland: '#7f7a6c',
+};
+
+const NATAL_PATH_TEXTURE_ORDER: IslaNatalPathTextureId[] = [
+  'terracotta',
+  'coastal',
+  'port',
+  'arboleda',
+  'highland',
+];
+
+interface NatalSandTiles {
+  granular: HTMLCanvasElement | null;
+  rippled: HTMLCanvasElement | null;
+  mask: number;
+}
+
+const NATAL_SAND_GRANULAR_SRC = '/assets/aistudio/96630aeb4027b8722e28830b57576564_6e16ae7c.jpg';
+const NATAL_SAND_RIPPLED_SRC = '/assets/aistudio/091ef03ceb1f7adf1d6967ee322945fc_0c1f74b1.jpg';
+
+let coastField: NatalCoastField | null = null;
+let coastGroundLayer: HTMLCanvasElement | null = null;
+let coastLayerTileMask = -1;
+let coastFoam: NatalFoamPoint[] = [];
+let natalGrassTileImg: HTMLImageElement | null = null;
+let natalGrassCloverImg: HTMLImageElement | null = null;
+let natalGrassSunlitImg: HTMLImageElement | null = null;
+let natalSandGranularImg: HTMLImageElement | null = null;
+let natalSandRippledImg: HTMLImageElement | null = null;
+let natalSandGranularTile: HTMLCanvasElement | null = null;
+let natalSandRippledTile: HTMLCanvasElement | null = null;
+const natalPathTileImgs: Partial<Record<IslaNatalPathTextureId, HTMLImageElement>> = {};
+
+function ensureNatalGrassTiles(): NatalGrassTiles {
+  if (typeof Image === 'undefined') {
+    return { base: null, clover: null, sunlit: null, mask: 0 };
+  }
+  if (!natalGrassTileImg) {
+    natalGrassTileImg = new Image();
+    natalGrassTileImg.decoding = 'async';
+    natalGrassTileImg.src = '/assets/pixelverse/natal-grass-tile.png';
+  }
+  if (!natalGrassCloverImg) {
+    natalGrassCloverImg = new Image();
+    natalGrassCloverImg.decoding = 'async';
+    natalGrassCloverImg.src = '/assets/pixelverse/natal-grass-clover.png';
+  }
+  if (!natalGrassSunlitImg) {
+    natalGrassSunlitImg = new Image();
+    natalGrassSunlitImg.decoding = 'async';
+    natalGrassSunlitImg.src = '/assets/pixelverse/natal-grass-sunlit.png';
+  }
+  const base =
+    natalGrassTileImg.complete && natalGrassTileImg.naturalWidth > 0 ? natalGrassTileImg : null;
+  const clover =
+    natalGrassCloverImg.complete && natalGrassCloverImg.naturalWidth > 0
+      ? natalGrassCloverImg
+      : null;
+  const sunlit =
+    natalGrassSunlitImg.complete && natalGrassSunlitImg.naturalWidth > 0
+      ? natalGrassSunlitImg
+      : null;
+  const mask = (base ? 1 : 0) | (clover ? 2 : 0) | (sunlit ? 4 : 0);
+  return { base, clover, sunlit, mask };
+}
+
+function ensureNatalPathTiles(): NatalPathTiles {
+  const empty: Record<IslaNatalPathTextureId, HTMLImageElement | null> = {
+    terracotta: null,
+    coastal: null,
+    port: null,
+    arboleda: null,
+    highland: null,
+  };
+  if (typeof Image === 'undefined') {
+    return { images: empty, mask: 0 };
+  }
+  let mask = 0;
+  for (let i = 0; i < NATAL_PATH_TEXTURE_ORDER.length; i++) {
+    const key = NATAL_PATH_TEXTURE_ORDER[i];
+    let img = natalPathTileImgs[key];
+    if (!img) {
+      img = new Image();
+      img.decoding = 'async';
+      img.src = NATAL_PATH_TILE_SOURCES[key];
+      natalPathTileImgs[key] = img;
+    }
+    if (img.complete && img.naturalWidth > 0) {
+      empty[key] = img;
+      mask |= 1 << i;
+    }
+  }
+  return { images: empty, mask };
+}
+
+/**
+ * Convierte una fotografía de arena en un mosaico toroidal 100% continuo (sin cortes
+ * ni costuras visibles al repetirse con createPattern) y equilibra su escala/color
+ * para integrarse con la iluminación dorada de Isla Natal.
+ */
+function bakeSeamlessSandTile(
+  img: HTMLImageElement,
+  size: number,
+  mode: 'granular' | 'rippled'
+): HTMLCanvasElement | null {
+  if (typeof document === 'undefined' || !img.complete || img.naturalWidth <= 0) return null;
+
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+
+  // Recorte central limpio evitando bordes de compresión JPG
+  let sx = 0;
+  let sy = 0;
+  let sw = nw;
+  let sh = nh;
+  if (mode === 'granular') {
+    const crop = Math.min(nw, Math.round(nh * 0.72));
+    sx = Math.floor((nw - crop) * 0.5);
+    sy = Math.floor((nh - crop) * 0.45);
+    sw = crop;
+    sh = crop;
+  } else {
+    const cropH = Math.round(nh * 0.88);
+    const cropW = Math.min(nw, Math.round(cropH * 1.18));
+    sx = Math.floor((nw - cropW) * 0.5);
+    sy = Math.floor((nh - cropH) * 0.5);
+    sw = cropW;
+    sh = cropH;
+  }
+
+  const rawCanvas = document.createElement('canvas');
+  rawCanvas.width = size;
+  rawCanvas.height = size;
+  const rctx = rawCanvas.getContext('2d');
+  if (!rctx) return null;
+  rctx.imageSmoothingEnabled = true;
+  rctx.imageSmoothingQuality = 'high';
+  rctx.drawImage(img, sx, sy, sw, sh, 0, 0, size, size);
+
+  const srcData = rctx.getImageData(0, 0, size, size).data;
+
+  // Normalizamos gradientes macro de iluminación para que no se perciba repetición en grilla,
+  // preservando intactos el grano mineral, las conchas diminutas y las ondas de viento.
+  const blurRadius = Math.max(8, Math.round(size * 0.14));
+  const tempLum = new Float32Array(size * size);
+  const macroLum = new Float32Array(size * size);
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  const totalPx = size * size;
+
+  for (let i = 0; i < totalPx; i++) {
+    const p = i * 4;
+    sumR += srcData[p];
+    sumG += srcData[p + 1];
+    sumB += srcData[p + 2];
+  }
+  const meanR = sumR / totalPx;
+  const meanG = sumG / totalPx;
+  const meanB = sumB / totalPx;
+  const meanLum = 0.299 * meanR + 0.587 * meanG + 0.114 * meanB;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let acc = 0;
+      let count = 0;
+      for (let k = -blurRadius; k <= blurRadius; k += 2) {
+        const xx = (x + k + size) % size;
+        const p = (y * size + xx) * 4;
+        acc += 0.299 * srcData[p] + 0.587 * srcData[p + 1] + 0.114 * srcData[p + 2];
+        count++;
       }
-      inDist[cy * cols + cx] = dist[cy * cols + cx] === 0 ? 9999 : 0;
+      tempLum[y * size + x] = acc / count;
+    }
+  }
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let acc = 0;
+      let count = 0;
+      for (let k = -blurRadius; k <= blurRadius; k += 2) {
+        const yy = (y + k + size) % size;
+        acc += tempLum[yy * size + x];
+        count++;
+      }
+      macroLum[y * size + x] = acc / count;
     }
   }
 
+  const eqData = new Uint8ClampedArray(totalPx * 4);
+  const flattenStrength = mode === 'granular' ? 0.62 : 0.72;
+  // Paleta objetivo cálida y coherente entre ambas muestras de arena
+  const targetR = mode === 'granular' ? 210 : 219;
+  const targetG = mode === 'granular' ? 176 : 186;
+  const targetB = mode === 'granular' ? 124 : 131;
+  const contrast = mode === 'granular' ? 0.88 : 0.94;
+
+  for (let i = 0; i < totalPx; i++) {
+    const p = i * 4;
+    const localMacro = macroLum[i] || meanLum;
+    const corr = Math.pow(meanLum / Math.max(32, localMacro), flattenStrength);
+    const nr = (srcData[p] * corr - meanR) * contrast + targetR;
+    const ng = (srcData[p + 1] * corr - meanG) * contrast + targetG;
+    const nb = (srcData[p + 2] * corr - meanB) * contrast + targetB;
+    eqData[p] = Math.max(0, Math.min(255, Math.round(nr)));
+    eqData[p + 1] = Math.max(0, Math.min(255, Math.round(ng)));
+    eqData[p + 2] = Math.max(0, Math.min(255, Math.round(nb)));
+    eqData[p + 3] = 255;
+  }
+
+  // Síntesis toroidal de 4 cuadrantes desfasados con pesos suaves cosenoidales:
+  // garantiza continuidad C1 perfecta en bordes X e Y sin líneas de unión.
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = size;
+  outCanvas.height = size;
+  const octx = outCanvas.getContext('2d');
+  if (!octx) return null;
+  const outImg = octx.createImageData(size, size);
+  const out = outImg.data;
+  const half = size >> 1;
+
+  for (let y = 0; y < size; y++) {
+    const wy = 0.5 - 0.5 * Math.cos((2 * Math.PI * y) / size);
+    const yShift = (y + half) % size;
+    for (let x = 0; x < size; x++) {
+      const wx = 0.5 - 0.5 * Math.cos((2 * Math.PI * x) / size);
+      const xShift = (x + half) % size;
+
+      const w00 = wx * wy;
+      const w10 = (1 - wx) * wy;
+      const w01 = wx * (1 - wy);
+      const w11 = (1 - wx) * (1 - wy);
+
+      const i00 = (y * size + x) * 4;
+      const i10 = (y * size + xShift) * 4;
+      const i01 = (yShift * size + x) * 4;
+      const i11 = (yShift * size + xShift) * 4;
+
+      const dst = i00;
+      const r = eqData[i00] * w00 + eqData[i10] * w10 + eqData[i01] * w01 + eqData[i11] * w11;
+      const g =
+        eqData[i00 + 1] * w00 +
+        eqData[i10 + 1] * w10 +
+        eqData[i01 + 1] * w01 +
+        eqData[i11 + 1] * w11;
+      const b =
+        eqData[i00 + 2] * w00 +
+        eqData[i10 + 2] * w10 +
+        eqData[i01 + 2] * w01 +
+        eqData[i11 + 2] * w11;
+
+      // Sutil cuantización estética para integrarse con el pixel-art de alta calidad
+      out[dst] = Math.min(255, Math.round(r / 3) * 3);
+      out[dst + 1] = Math.min(255, Math.round(g / 3) * 3);
+      out[dst + 2] = Math.min(255, Math.round(b / 3) * 3);
+      out[dst + 3] = 255;
+    }
+  }
+
+  octx.putImageData(outImg, 0, 0);
+  return outCanvas;
+}
+
+function ensureNatalSandTiles(): NatalSandTiles {
+  if (typeof Image === 'undefined') {
+    return { granular: null, rippled: null, mask: 0 };
+  }
+  if (!natalSandGranularImg) {
+    natalSandGranularImg = new Image();
+    natalSandGranularImg.decoding = 'async';
+    natalSandGranularImg.src = NATAL_SAND_GRANULAR_SRC;
+  }
+  if (!natalSandRippledImg) {
+    natalSandRippledImg = new Image();
+    natalSandRippledImg.decoding = 'async';
+    natalSandRippledImg.src = NATAL_SAND_RIPPLED_SRC;
+  }
+  if (
+    !natalSandGranularTile &&
+    natalSandGranularImg.complete &&
+    natalSandGranularImg.naturalWidth > 0
+  ) {
+    natalSandGranularTile = bakeSeamlessSandTile(natalSandGranularImg, 144, 'granular');
+  }
+  if (
+    !natalSandRippledTile &&
+    natalSandRippledImg.complete &&
+    natalSandRippledImg.naturalWidth > 0
+  ) {
+    natalSandRippledTile = bakeSeamlessSandTile(natalSandRippledImg, 168, 'rippled');
+  }
+  const mask = (natalSandGranularTile ? 1 : 0) | (natalSandRippledTile ? 2 : 0);
+  return {
+    granular: natalSandGranularTile,
+    rippled: natalSandRippledTile,
+    mask,
+  };
+}
+
+/**
+ * Micro-erosión natural de la línea de costa (en píxeles): suave y fluida en playas
+ * de arena, más quebrada y mineral en los acantilados del Alto de las Rocas.
+ */
+function coastMicroErosion(wx: number, wy: number, surfaceCode: number): number {
+  const waveLong = Math.sin(wx * 0.024 + Math.cos(wy * 0.019) * 1.9);
+  const waveMed = Math.sin(wy * 0.043 - wx * 0.029 + 1.4);
+  const waveFine = Math.sin((wx - wy) * 0.085 + 0.8);
+  const grain = hash2(Math.floor(wx / 5) + 31, Math.floor(wy / 5) - 47) - 0.5;
+  if (surfaceCode === SURFACE_CODE_ROCK) {
+    return waveLong * 4.6 + waveMed * 3.8 + waveFine * 2.4 + grain * 4.2;
+  }
+  return waveLong * 3.4 + waveMed * 2.1 + waveFine * 0.9 + grain * 1.6;
+}
+
+/** Garantiza que ningún punto caminable del jugador quede jamás sobre el agua. */
+function isInsideWalkableSafetyCore(wx: number, wy: number): boolean {
+  const inset = 4;
+  for (let i = 0; i < ISLA_NATAL_WALK_RECTS.length; i++) {
+    const r: IslaNatalWalkRect = ISLA_NATAL_WALK_RECTS[i];
+    if (
+      wx >= r.x + inset &&
+      wx <= r.x + r.w - inset &&
+      wy >= r.y + inset &&
+      wy <= r.y + r.h - inset
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function runChamferSweep(
+  cols: number,
+  rows: number,
+  dist: Float32Array,
+  inDist: Float32Array,
+  surface?: Uint8Array
+): void {
   const D = Math.SQRT2;
   const relax = (i: number, ni: number, weight: number) => {
     if (dist[ni] + weight < dist[i]) {
       dist[i] = dist[ni] + weight;
-      rectIndex[i] = rectIndex[ni];
+      if (surface) surface[i] = surface[ni];
     }
   };
   const relaxInner = (i: number, ni: number, weight: number) => {
     if (inDist[ni] + weight < inDist[i]) inDist[i] = inDist[ni] + weight;
   };
+
   for (let cy = 0; cy < rows; cy++) {
     for (let cx = 0; cx < cols; cx++) {
       const i = cy * cols + cx;
@@ -296,8 +914,137 @@ function buildCoastField(): NatalCoastField {
       }
     }
   }
+}
 
-  return { cols, rows, pad, step, dist, inDist, rectIndex };
+function buildCoastField(): NatalCoastField {
+  const pad = GROUND_PAD;
+  const step = COAST_STEP;
+  const cols = Math.ceil((ISLA_NATAL_WORLD_W + pad * 2) / step) + 1;
+  const rows = Math.ceil((ISLA_NATAL_WORLD_H + pad * 2) / step) + 1;
+  const total = cols * rows;
+  const dist = new Float32Array(total);
+  const inDist = new Float32Array(total);
+  const surface = new Uint8Array(total);
+
+  // 1. Rasterización rápida de los contornos orgánicos (isla, escollos, pradera y roca)
+  const baseLand = new Uint8Array(total);
+  if (typeof document !== 'undefined') {
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = cols;
+    maskCanvas.height = rows;
+    const mctx = maskCanvas.getContext('2d');
+    if (mctx) {
+      mctx.save();
+      mctx.scale(1 / step, 1 / step);
+      mctx.translate(pad, pad);
+
+      // Canal R: masa terrestre principal + cayos/escollos + núcleo seguro caminable
+      mctx.fillStyle = '#ff0000';
+      mctx.beginPath();
+      tracePolygonRing(mctx, NATAL_ISLAND_RING);
+      for (const sk of NATAL_SKERRY_RINGS) tracePolygonRing(mctx, sk.ring);
+      mctx.fill();
+      for (const r of ISLA_NATAL_WALK_RECTS) {
+        mctx.fillRect(r.x + 4, r.y + 4, Math.max(2, r.w - 8), Math.max(2, r.h - 8));
+      }
+
+      // Canal G: pradera interior (solo donde ya existe masa terrestre)
+      mctx.globalCompositeOperation = 'source-atop';
+      mctx.fillStyle = '#ff8000';
+      mctx.beginPath();
+      tracePolygonRing(mctx, NATAL_MEADOW_RING);
+      mctx.fill();
+
+      // Canal B: promontorio rocoso y escollos de roca
+      mctx.fillStyle = '#ff00ff';
+      mctx.beginPath();
+      tracePolygonRing(mctx, NATAL_ROCK_PLATEAU_RING);
+      for (const sk of NATAL_SKERRY_RINGS) {
+        if (sk.surface === 'rock') tracePolygonRing(mctx, sk.ring);
+      }
+      mctx.fill();
+      mctx.restore();
+
+      const img = mctx.getImageData(0, 0, cols, rows).data;
+      for (let i = 0; i < total; i++) {
+        const p = i * 4;
+        if (img[p + 3] > 96 && img[p] > 96) {
+          baseLand[i] = 1;
+          surface[i] =
+            img[p + 2] > 128
+              ? SURFACE_CODE_ROCK
+              : img[p + 1] > 64
+                ? SURFACE_CODE_GRASS
+                : SURFACE_CODE_SAND;
+        }
+      }
+    }
+  } else {
+    for (let cy = 0; cy < rows; cy++) {
+      for (let cx = 0; cx < cols; cx++) {
+        const wx = cx * step - pad + step * 0.5;
+        const wy = cy * step - pad + step * 0.5;
+        const idx = cy * cols + cx;
+        if (pointInPolygonRing(wx, wy, NATAL_ISLAND_RING) || isInsideWalkableSafetyCore(wx, wy)) {
+          baseLand[idx] = 1;
+          surface[idx] = pointInPolygonRing(wx, wy, NATAL_ROCK_PLATEAU_RING)
+            ? SURFACE_CODE_ROCK
+            : pointInPolygonRing(wx, wy, NATAL_MEADOW_RING)
+              ? SURFACE_CODE_GRASS
+              : SURFACE_CODE_SAND;
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < total; i++) {
+    if (baseLand[i]) {
+      dist[i] = 0;
+      inDist[i] = 9999;
+    } else {
+      dist[i] = 9999;
+      inDist[i] = 0;
+    }
+  }
+  runChamferSweep(cols, rows, dist, inDist, surface);
+
+  // 2. Aplicamos micro-erosión marina al borde para tallar calas, salientes y rocas vivas
+  const erodedLand = new Uint8Array(total);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const i = cy * cols + cx;
+      const wx = cx * step - pad + step * 0.5;
+      const wy = cy * step - pad + step * 0.5;
+      const rawSdPx = (dist[i] > 0 ? dist[i] : -inDist[i]) * step;
+      if (Math.abs(rawSdPx) > 14) {
+        erodedLand[i] = rawSdPx <= 0 ? 1 : 0;
+        continue;
+      }
+      // En el arranque del muelle del Puerto Norte mantenemos la orilla limpia en y ≈ 498
+      const dockBlend =
+        wy > 480 && wy < 524 && wx > 786 && wx < 854
+          ? Math.max(0, 1 - Math.abs(wx - 820) / 34)
+          : 0;
+      const erosion = coastMicroErosion(wx, wy, surface[i]) * (1 - dockBlend * 0.75);
+      if (rawSdPx - erosion <= 0 || isInsideWalkableSafetyCore(wx, wy)) {
+        erodedLand[i] = 1;
+      }
+    }
+  }
+
+  // 3. Campo de distancias definitivo sobre la silueta erosionada
+  for (let i = 0; i < total; i++) {
+    if (erodedLand[i]) {
+      dist[i] = 0;
+      inDist[i] = 9999;
+    } else {
+      dist[i] = 9999;
+      inDist[i] = 0;
+    }
+  }
+  runChamferSweep(cols, rows, dist, inDist, surface);
+
+  return { cols, rows, pad, step, dist, inDist, surface };
 }
 
 function sampleDistancePx(field: NatalCoastField, wx: number, wy: number): number {
@@ -318,12 +1065,15 @@ function sampleDistancePx(field: NatalCoastField, wx: number, wy: number): numbe
   return (top + (bottom - top) * ty) * field.step;
 }
 
-function sampleRectIndex(field: NatalCoastField, wx: number, wy: number): number {
+function sampleSurfaceAt(field: NatalCoastField, wx: number, wy: number): IslaNatalSurface {
   const cx = Math.round((wx + field.pad) / field.step - 0.5);
   const cy = Math.round((wy + field.pad) / field.step - 0.5);
   const x = Math.max(0, Math.min(field.cols - 1, cx));
   const y = Math.max(0, Math.min(field.rows - 1, cy));
-  return field.rectIndex[y * field.cols + x];
+  const code = field.surface[y * field.cols + x];
+  if (code === SURFACE_CODE_ROCK) return 'rock';
+  if (code === SURFACE_CODE_GRASS) return 'grass';
+  return 'sand';
 }
 
 function sampleInnerDistancePx(field: NatalCoastField, wx: number, wy: number): number {
@@ -353,8 +1103,9 @@ function buildFoamPoints(field: NatalCoastField): NatalFoamPoint[] {
   ];
   const pts: NatalFoamPoint[] = [];
   const step = field.step;
-  for (let cy = 1; cy < field.rows - 1; cy++) {
-    for (let cx = 1; cx < field.cols - 1; cx++) {
+  const stride = Math.max(1, Math.round(4 / step));
+  for (let cy = stride; cy < field.rows - stride; cy += stride) {
+    for (let cx = stride; cx < field.cols - stride; cx += stride) {
       const d = field.dist[cy * field.cols + cx] * step;
       if (d < 1 || d > 52) continue;
       for (let b = 0; b < bands.length; b++) {
@@ -362,12 +1113,15 @@ function buildFoamPoints(field: NatalCoastField): NatalFoamPoint[] {
         if (d < band.min || d > band.max) continue;
         const h = hash2(cx * 37 + b * 911, cy * 53 - b * 277);
         if (h < band.skip) continue;
-        const gx = field.dist[cy * field.cols + cx + 1] - field.dist[cy * field.cols + cx - 1];
-        const gy = field.dist[(cy + 1) * field.cols + cx] - field.dist[(cy - 1) * field.cols + cx];
+        const gx =
+          field.dist[cy * field.cols + cx + stride] - field.dist[cy * field.cols + cx - stride];
+        const gy =
+          field.dist[(cy + stride) * field.cols + cx] -
+          field.dist[(cy - stride) * field.cols + cx];
         const horiz = Math.abs(gy) >= Math.abs(gx);
         pts.push({
-          x: cx * step - field.pad + (h - 0.5) * step * 1.7,
-          y: cy * step - field.pad + (hash2(cx + 191, cy - 71) - 0.5) * step * 1.7,
+          x: cx * step - field.pad + (h - 0.5) * 6.5,
+          y: cy * step - field.pad + (hash2(cx + 191, cy - 71) - 0.5) * 6.5,
           phase: h * 6.283 + b * 1.37,
           band: b,
           horiz,
@@ -395,7 +1149,7 @@ function shelfColor(d: number): string {
 
 function wetRimColor(surface: IslaNatalSurface, alpha: number): string {
   const a = Math.max(0, Math.min(1, alpha));
-  if (surface === 'sand') return `rgba(148, 108, 58, ${(a * 0.58).toFixed(3)})`;
+  if (surface === 'sand') return `rgba(136, 98, 52, ${(a * 0.62).toFixed(3)})`;
   if (surface === 'grass') return `rgba(26, 64, 29, ${(a * 0.44).toFixed(3)})`;
   if (surface === 'path') return `rgba(102, 74, 42, ${(a * 0.5).toFixed(3)})`;
   return `rgba(50, 46, 40, ${(a * 0.46).toFixed(3)})`;
@@ -437,385 +1191,723 @@ function paintSandTexture(
   h: number,
   seed: number
 ): void {
-  ctx.fillStyle = '#e3cf99';
+  const sandTiles = ensureNatalSandTiles();
+
+  // 1. Manto base continuo con la arena granular orgánica (imagen adjunta 1)
+  ctx.fillStyle = '#d4b27c';
   ctx.fillRect(x, y, w, h);
 
-  // Mantos de arena: grandes halos cálidos y húmedos que rompen el plano.
-  for (let py = y; py < y + h; py += 54) {
-    for (let px = x; px < x + w; px += 54) {
-      const th = hash2(px * 0.23 + seed, py * 0.31 - seed);
-      const cx = px + 14 + Math.floor(th * 28);
-      const cy = py + 16 + Math.floor(hash2(px + 7, py + 3) * 24);
-      if (th > 0.58) {
-        paintGroundHalo(ctx, cx, cy, 24 + th * 16, 12 + th * 8, '255, 244, 202', 0.12 + th * 0.06);
-      } else {
-        paintGroundHalo(ctx, cx, cy, 22 + th * 20, 11 + th * 9, '178, 142, 88', 0.08 + (1 - th) * 0.04);
-      }
-    }
+  const granularPattern = sandTiles.granular
+    ? ctx.createPattern(sandTiles.granular, 'repeat')
+    : null;
+  if (granularPattern) {
+    ctx.fillStyle = granularPattern;
+    ctx.fillRect(x, y, w, h);
   }
 
-  // Dunas: crestas quebradas, nunca líneas rectas. Sombra al sur de la cresta
-  // y luz cálida encima, como el relieve de una playa real.
-  for (let py = y + 3; py < y + h - 1; py += 8) {
-    let px = x + Math.floor(hash2(py, seed) * 18) - 8;
-    while (px < x + w - 2) {
-      const th = hash2(px + 13, py + 71);
-      const len = 5 + Math.floor(th * 13);
-      const lift = Math.round(Math.sin(px * 0.052 + py * 0.13 + seed) * 1.7);
-      if (th > 0.25) {
-        ctx.fillStyle = 'rgba(172, 132, 78, 0.2)';
-        ctx.fillRect(px, py + 1 + lift, Math.min(len, x + w - px), 2);
-        ctx.fillStyle = 'rgba(255, 245, 210, 0.44)';
-        ctx.fillRect(px + 1, py + lift, Math.max(2, Math.min(len - 2, x + w - px - 1)), 1);
+  // 2. Bancos y lomas de arena rizada por el viento (imagen adjunta 2) fundidos
+  // con máscaras radiales suaves en playas abiertas, cabos y caletas secas.
+  const rippledPattern = sandTiles.rippled
+    ? ctx.createPattern(sandTiles.rippled, 'repeat')
+    : null;
+  if (rippledPattern && typeof document !== 'undefined') {
+    const patchCanvas = document.createElement('canvas');
+    patchCanvas.width = 420;
+    patchCanvas.height = 280;
+    const patchCtx = patchCanvas.getContext('2d');
+    if (patchCtx) {
+      const duneZones: [number, number, number, number, number][] = [
+        // Playa del Aurora (abanicos de dunas suaves a ambos lados del paso costero)
+        [670, 978, 158, 76, 0.88],
+        [882, 976, 166, 78, 0.86],
+        [996, 998, 128, 66, 0.82],
+        [604, 996, 108, 58, 0.78],
+        // Punta del Oleaje y Ensenada Este (lenguas de arena peinada por la brisa marina)
+        [1234, 838, 134, 88, 0.90],
+        [1160, 902, 124, 72, 0.84],
+        [1348, 830, 52, 34, 0.82],
+        // Caleta del Poniente y ribera suroeste
+        [496, 916, 114, 68, 0.82],
+        [426, 842, 82, 58, 0.72],
+        // Media luna de arena del Puerto Norte y Caleta del Norte
+        [820, 496, 86, 38, 0.74],
+        [1044, 534, 74, 42, 0.78],
+        [682, 464, 72, 38, 0.68],
+      ];
+      for (const [cx, cy, rx, ry, alpha] of duneZones) {
+        paintTexturedMeadowPatch(ctx, rippledPattern, patchCanvas, patchCtx, cx, cy, rx, ry, alpha);
       }
-      px += len + 3 + Math.floor(hash2(px - 9, py + 5) * 11);
     }
-  }
-
-  // Grano fino: mantiene la superficie viva al acercarse sin ensuciar la lectura.
-  for (let py = y + 1; py < y + h; py += 4) {
-    for (let px = x + 1; px < x + w; px += 5) {
-      const th = hash2(px + 41, py - 19);
-      if (th < 0.42) continue;
-      if (th > 0.91) {
-        ctx.fillStyle = 'rgba(255, 250, 232, 0.72)';
-        ctx.fillRect(px, py, 2, 1);
-      } else if (th > 0.68) {
-        ctx.fillStyle = 'rgba(196, 158, 104, 0.3)';
-        ctx.fillRect(px, py, 1, 1);
-      } else {
-        ctx.fillStyle = 'rgba(255, 240, 198, 0.26)';
-        ctx.fillRect(px + 1, py, 1, 1);
-      }
-    }
-  }
-
-  // Restos marinos en pequeños racimos: conchas, guijarros y algas secas.
-  for (let py = y + 8; py < y + h - 8; py += 34) {
-    for (let px = x + 6; px < x + w - 8; px += 41) {
-      const th = hash2(px + 7 + seed, py + 13);
-      if (th < 0.78) continue;
-      const cx = px + Math.floor(hash2(px, py) * 8);
-      const cy = py + Math.floor(hash2(py, px) * 8);
-      if (th > 0.91) {
-        for (let i = 0; i < 3; i++) {
-          const sx = cx + i * 4 + (i % 2);
-          const sy = cy + (i === 1 ? -2 : 0);
-          ctx.fillStyle = 'rgba(146, 112, 64, 0.35)';
-          ctx.fillRect(sx, sy + 2, 4, 1);
-          ctx.fillStyle = '#fff7e6';
-          ctx.fillRect(sx, sy, 3, 2);
-          ctx.fillRect(sx + 1, sy - 1, 1, 3);
-          ctx.fillStyle = '#eeaabf';
-          ctx.fillRect(sx + 1, sy, 1, 1);
+  } else if (!granularPattern) {
+    // Respaldo cromático armónico mientras decodifican las texturas asíncronamente
+    for (let py = y; py < y + h; py += 52) {
+      for (let px = x; px < x + w; px += 52) {
+        const th = hash2(px * 0.23 + seed, py * 0.31 - seed);
+        const cx = px + 14 + Math.floor(th * 26);
+        const cy = py + 16 + Math.floor(hash2(px + 7, py + 3) * 22);
+        if (th > 0.54) {
+          paintGroundHalo(ctx, cx, cy, 26 + th * 16, 12 + th * 8, '238, 212, 162', 0.16);
+        } else {
+          paintGroundHalo(ctx, cx, cy, 24 + th * 18, 11 + th * 8, '166, 128, 78', 0.12);
         }
-      } else {
-        ctx.fillStyle = 'rgba(146, 112, 64, 0.3)';
-        ctx.fillRect(cx + 1, cy + 2, 5, 1);
-        ctx.fillStyle = '#b0a58c';
-        ctx.fillRect(cx, cy, 3, 2);
-        ctx.fillStyle = 'rgba(255, 250, 232, 0.5)';
-        ctx.fillRect(cx, cy, 2, 1);
-        ctx.fillStyle = 'rgba(110, 122, 88, 0.55)';
-        ctx.fillRect(cx + 5, cy + 1, 3, 1);
-        ctx.fillRect(cx + 8, cy, 1, 2);
       }
     }
   }
 
-  // Finísima luz poniente sobre la arena, integrada en el material.
-  ctx.fillStyle = 'rgba(255, 236, 190, 0.16)';
-  ctx.fillRect(x, y, w, 1);
+  // 3. Relieve volumétrico de hora dorada: calidez de sol poniente en lomos altos
+  // y sutil humedad ocre en hondonadas para dar profundidad orgánica a toda la costa.
+  for (let py = y; py < y + h; py += 64) {
+    for (let px = x; px < x + w; px += 64) {
+      const th = hash2(px * 0.19 + seed, py * 0.29 - seed);
+      const cx = px + 16 + Math.floor(th * 30);
+      const cy = py + 16 + Math.floor(hash2(px + 11, py - 5) * 28);
+      if (th > 0.60) {
+        paintGroundHalo(ctx, cx, cy, 34 + th * 20, 16 + th * 10, '252, 232, 184', 0.11);
+      } else if (th < 0.32) {
+        paintGroundHalo(ctx, cx, cy, 30 + th * 22, 15 + th * 9, '138, 100, 56', 0.10);
+      }
+    }
+  }
+
+  // 4. Micro-destellos minerales de cuarzo y diminutos restos marinos integrados en la arena
+  for (let py = y + 6; py < y + h - 6; py += 18) {
+    for (let px = x + 6; px < x + w - 6; px += 21) {
+      const th = hash2(px + 41 + seed, py - 19);
+      if (th > 0.92) {
+        ctx.fillStyle = 'rgba(255, 246, 218, 0.46)';
+        ctx.fillRect(px, py, 2, 1);
+      } else if (th < 0.06) {
+        ctx.fillStyle = 'rgba(122, 88, 48, 0.32)';
+        ctx.fillRect(px, py, 2, 1);
+      }
+    }
+  }
 }
 
 /* ------------------------------ CÉSPED ---------------------------- */
 
-function paintGrassTexture(
+/**
+ * Pinta un parche orgánico difuminado de una textura de césped secundaria en
+ * coordenadas de mundo, manteniendo continuidad de fase con el patrón global.
+ */
+function paintTexturedMeadowPatch(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  seed: number
+  pattern: CanvasPattern,
+  patchCanvas: HTMLCanvasElement,
+  patchCtx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  alpha: number
 ): void {
-  ctx.fillStyle = '#477d39';
-  ctx.fillRect(x, y, w, h);
+  if (rx <= 2 || ry <= 2 || alpha <= 0) return;
+  const w = Math.ceil(rx * 2);
+  const h = Math.ceil(ry * 2);
+  if (patchCanvas.width < w) patchCanvas.width = w;
+  if (patchCanvas.height < h) patchCanvas.height = h;
 
-  // 1. Deriva tonal de la pradera: halos amplios y solapados que imitan el
-  // crecimiento desigual del césped, sin manchas rectangulares.
-  for (let py = y; py < y + h; py += 54) {
-    for (let px = x; px < x + w; px += 54) {
-      const th = hash2(px * 0.19 + seed, py * 0.27 + 13);
-      const cx = px + 14 + Math.floor(hash2(px + 5, py - 3) * 30);
-      const cy = py + 16 + Math.floor(hash2(px - 9, py + 7) * 28);
-      if (th > 0.56) {
-        paintGroundHalo(ctx, cx, cy, 34 + th * 22, 20 + th * 10, '132, 178, 84', 0.12 + th * 0.06);
-      } else if (th < 0.32) {
-        paintGroundHalo(ctx, cx, cy, 32 + th * 26, 19 + th * 10, '28, 70, 38', 0.14 + (1 - th) * 0.05);
-      } else if (th < 0.44) {
-        paintGroundHalo(ctx, cx, cy, 30, 18, '166, 168, 96', 0.06);
-      } else {
-        paintGroundHalo(ctx, cx, cy, 38, 22, '190, 216, 126', 0.045);
-      }
-    }
+  const left = Math.round(cx - rx);
+  const top = Math.round(cy - ry);
+
+  patchCtx.save();
+  patchCtx.globalCompositeOperation = 'source-over';
+  patchCtx.clearRect(0, 0, w, h);
+
+  // Máscara radial suave
+  patchCtx.save();
+  patchCtx.translate(rx, ry);
+  patchCtx.scale(1, Math.max(0.25, ry / rx));
+  const mask = patchCtx.createRadialGradient(0, 0, rx * 0.12, 0, 0, rx);
+  mask.addColorStop(0, `rgba(255, 255, 255, ${alpha.toFixed(3)})`);
+  mask.addColorStop(0.58, `rgba(255, 255, 255, ${(alpha * 0.62).toFixed(3)})`);
+  mask.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  patchCtx.fillStyle = mask;
+  patchCtx.fillRect(-rx, -rx, rx * 2, rx * 2);
+  patchCtx.restore();
+
+  // Relleno con la textura en fase exacta de coordenadas de mundo
+  patchCtx.globalCompositeOperation = 'source-in';
+  patchCtx.translate(-left, -top);
+  patchCtx.fillStyle = pattern;
+  patchCtx.fillRect(left, top, w, h);
+  patchCtx.restore();
+
+  ctx.drawImage(patchCanvas, 0, 0, w, h, left, top, w, h);
+}
+
+/**
+ * Unifica toda la vegetación de Isla Natal dentro de un contorno costero curvo
+ * y festoneado que integra las tres texturas de césped sin bordes rectos.
+ */
+function paintUnifiedIslandMeadow(ctx: CanvasRenderingContext2D): void {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const [px, py] of NATAL_MEADOW_RING) {
+    if (px < minX) minX = px;
+    if (py < minY) minY = py;
+    if (px > maxX) maxX = px;
+    if (py > maxY) maxY = py;
   }
+  minX = Math.floor(minX - 18);
+  minY = Math.floor(minY - 18);
+  maxX = Math.ceil(maxX + 18);
+  maxY = Math.ceil(maxY + 18);
 
-  // 2. Calvas soleadas y matas profundas de escala media.
-  for (let py = y + 6; py < y + h - 4; py += 19) {
-    for (let px = x + 4; px < x + w - 6; px += 21) {
-      const th = hash2(px + 73, py + 29);
-      if (th > 0.84) {
-        ctx.fillStyle = 'rgba(32, 72, 33, 0.34)';
-        ctx.fillRect(px, py, 8, 3);
-        ctx.fillRect(px + 2, py + 3, 5, 2);
-      } else if (th < 0.13) {
-        ctx.fillStyle = 'rgba(158, 196, 96, 0.28)';
-        ctx.fillRect(px, py, 6, 2);
-        ctx.fillRect(px + 3, py + 2, 4, 1);
-      }
-    }
+  const tiles = ensureNatalGrassTiles();
+
+  ctx.save();
+  // Primero recortamos al perímetro exterior de la isla y luego al contorno
+  // festoneado de la pradera para que las playas curvas afloren con suavidad.
+  ctx.beginPath();
+  tracePolygonRing(ctx, NATAL_ISLAND_RING);
+  ctx.clip();
+
+  ctx.beginPath();
+  tracePolygonRing(ctx, NATAL_MEADOW_RING);
+  // Pequeños lóbulos herbáceos a lo largo del contorno para romper cualquier trazo continuo
+  for (let i = 0; i < NATAL_MEADOW_RING.length; i += 2) {
+    const [mx, my] = NATAL_MEADOW_RING[i];
+    const h = hash2(Math.round(mx * 3) + i * 19, Math.round(my * 3) - i * 11);
+    if (h < 0.35) continue;
+    const r = 3.2 + h * 5.2;
+    ctx.moveTo(mx + r, my);
+    ctx.arc(mx, my, r, 0, Math.PI * 2);
   }
+  ctx.clip();
 
-  // 3. Grano del terreno: micro-píxeles cálidos y fríos alternados que dan
-  // acabado de superficie pintada en vez de relleno plano.
-  for (let py = y + 1; py < y + h; py += 3) {
-    for (let px = x + 1; px < x + w; px += 4) {
-      const th = hash2(px + 51, py + 131);
-      if (th < 0.5) continue;
-      if (th > 0.91) {
-        ctx.fillStyle = 'rgba(158, 205, 104, 0.32)';
-        ctx.fillRect(px, py, 1, 1);
-      } else if (th > 0.62) {
-        ctx.fillStyle = 'rgba(26, 64, 30, 0.26)';
-        ctx.fillRect(px, py, 1, 1);
+  // 1. Manto base continuo (césped frondoso volumétrico)
+  const basePattern = tiles.base ? ctx.createPattern(tiles.base, 'repeat') : null;
+  ctx.fillStyle = basePattern ?? '#387624';
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
+
+  // 2. Mezcla orgánica de biomas con las otras dos texturas de césped
+  const cloverPattern = tiles.clover ? ctx.createPattern(tiles.clover, 'repeat') : null;
+  const sunlitPattern = tiles.sunlit ? ctx.createPattern(tiles.sunlit, 'repeat') : null;
+  if ((cloverPattern || sunlitPattern) && typeof document !== 'undefined') {
+    const patchCanvas = document.createElement('canvas');
+    patchCanvas.width = 360;
+    patchCanvas.height = 280;
+    const patchCtx = patchCanvas.getContext('2d');
+    if (patchCtx) {
+      // Claros soleados de la pradera central y lomas occidentales (textura 2: pradera soleada)
+      if (sunlitPattern) {
+        const sunlitClearings: [number, number, number, number, number][] = [
+          [645, 765, 155, 105, 0.62],
+          [855, 735, 145, 96, 0.56],
+          [505, 650, 120, 88, 0.54],
+          [735, 625, 135, 84, 0.52],
+          [920, 835, 118, 76, 0.48],
+          [445, 785, 110, 84, 0.50],
+          [690, 495, 90, 56, 0.46],
+        ];
+        for (const [cx, cy, rx, ry, a] of sunlitClearings) {
+          paintTexturedMeadowPatch(ctx, sunlitPattern, patchCanvas, patchCtx, cx, cy, rx, ry, a);
+        }
       }
-    }
-  }
 
-  // 4. Briznas: tres siluetas distintas, agrupadas en matas irregulares para
-  // que el prado tenga volumen y no parezca confeti disperso.
-  for (let py = y + 5; py < y + h - 2; py += 11) {
-    for (let px = x + 4; px < x + w - 2; px += 11) {
-      const th = hash2(px + 11, py + 97);
-      if (th < 0.5) continue;
-      const gx = px + Math.floor(th * 6);
-      const gy = py + Math.floor(hash2(px + 5, py + 3) * 6);
-      const kind = Math.floor(hash2(px + 21, py - 11) * 3);
-      const tall = 2 + Math.floor(th * 4);
-      ctx.fillStyle = 'rgba(26, 60, 30, 0.3)';
-      ctx.fillRect(gx - 1, gy + 1, 4, 1);
-      if (kind === 0) {
-        ctx.fillStyle = th > 0.74 ? '#6aae4b' : '#57963f';
-        ctx.fillRect(gx, gy - tall + 1, 1, tall);
-        ctx.fillRect(gx + 2, gy - tall, 1, tall + 1);
-        ctx.fillStyle = '#9ccb6c';
-        ctx.fillRect(gx + 1, gy - tall + 1, 1, 1);
-        ctx.fillStyle = '#b9de86';
-        ctx.fillRect(gx + 2, gy - tall, 1, 1);
-      } else if (kind === 1) {
-        ctx.fillStyle = '#4d8939';
-        ctx.fillRect(gx, gy - tall, 2, tall + 1);
-        ctx.fillStyle = '#74b251';
-        ctx.fillRect(gx + 2, gy - tall + 1, 2, tall);
-        ctx.fillStyle = '#a9d57c';
-        ctx.fillRect(gx + 2, gy - tall + 1, 1, 1);
-        ctx.fillStyle = 'rgba(34, 74, 32, 0.34)';
-        ctx.fillRect(gx + 1, gy - tall + 2, 1, 2);
-      } else {
-        ctx.fillStyle = '#5f9e46';
-        ctx.fillRect(gx + 1, gy - tall - 1, 1, tall + 1);
-        ctx.fillRect(gx, gy - 2, 1, 2);
-        ctx.fillRect(gx + 3, gy - 3, 1, 3);
-        ctx.fillStyle = '#a4cf74';
-        ctx.fillRect(gx + 1, gy - tall - 1, 1, 1);
-      }
-    }
-  }
-
-  // 5. Tréboles en parches y florecillas silvestres.
-  for (let py = y + 6; py < y + h - 5; py += 26) {
-    for (let px = x + 6; px < x + w - 6; px += 29) {
-      const th = hash2(px - 37, py + 61 + seed);
-      if (th < 0.86) continue;
-      if (th > 0.955) {
-        // Margarita con tallo y sombra.
-        ctx.fillStyle = 'rgba(30, 64, 30, 0.35)';
-        ctx.fillRect(px, py + 3, 4, 1);
-        ctx.fillStyle = '#357a37';
-        ctx.fillRect(px + 1, py + 1, 1, 3);
-        ctx.fillRect(px + 2, py + 2, 2, 1);
-        ctx.fillStyle = '#f8fafc';
-        ctx.fillRect(px, py - 1, 3, 1);
-        ctx.fillRect(px + 1, py - 2, 1, 3);
-        ctx.fillRect(px + 2, py, 2, 1);
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillRect(px + 1, py - 1, 1, 1);
-      } else {
-        // Parche de trébol: varias hojitas agrupadas.
-        for (let i = 0; i < 3; i++) {
-          const ox = px + i * 3;
-          const oy = py + (i % 2) * 2;
-          ctx.fillStyle = '#397c3b';
-          ctx.fillRect(ox, oy, 3, 1);
-          ctx.fillRect(ox + 1, oy - 1, 1, 3);
-          ctx.fillStyle = '#7cc25a';
-          ctx.fillRect(ox, oy, 2, 1);
-          ctx.fillRect(ox + 2, oy + 1, 1, 1);
+      // Sotobosque de tréboles y tierra húmeda en Península de la Arboleda y al pie de árboles (textura 1)
+      if (cloverPattern) {
+        const woodlandPockets: [number, number, number, number, number][] = [
+          [1245, 585, 195, 145, 0.78],
+          [1365, 565, 115, 110, 0.72],
+          [1120, 680, 130, 98, 0.72],
+          [790, 545, 155, 82, 0.64],
+          [1105, 785, 96, 86, 0.60],
+          [455, 580, 105, 78, 0.58],
+        ];
+        for (const [cx, cy, rx, ry, a] of woodlandPockets) {
+          paintTexturedMeadowPatch(ctx, cloverPattern, patchCanvas, patchCtx, cx, cy, rx, ry, a);
+        }
+        for (const t of ISLA_NATAL_TREES) {
+          paintTexturedMeadowPatch(ctx, cloverPattern, patchCanvas, patchCtx, t.x + 4, t.y + 4, 54, 34, 0.68);
+        }
+        for (const p of ISLA_NATAL_PALMS) {
+          paintTexturedMeadowPatch(ctx, cloverPattern, patchCanvas, patchCtx, p.x + 6, p.y + 4, 46, 28, 0.56);
         }
       }
     }
   }
 
-  // 6. Paja seca y piedritas: anclan la escala y dan aspereza al borde.
-  for (let py = y + 9; py < y + h - 6; py += 37) {
-    for (let px = x + 11; px < x + w - 9; px += 43) {
-      const th = hash2(px + 17, py - 5);
-      if (th < 0.8) continue;
-      if (th > 0.9) {
-        ctx.fillStyle = 'rgba(120, 130, 82, 0.5)';
-        ctx.fillRect(px, py, 3, 1);
-        ctx.fillRect(px + 3, py - 1, 2, 1);
-        ctx.fillStyle = 'rgba(255, 244, 202, 0.3)';
-        ctx.fillRect(px + 1, py - 1, 1, 1);
-      } else {
-        ctx.fillStyle = '#8d8779';
-        ctx.fillRect(px, py, 2, 2);
-        ctx.fillStyle = 'rgba(255, 244, 220, 0.45)';
-        ctx.fillRect(px, py, 1, 1);
+  // 3. Modulación lumínica de hora dorada para fundir las tres capas con la arena y la arboleda
+  for (let py = minY; py < maxY; py += 68) {
+    for (let px = minX; px < maxX; px += 68) {
+      const th = hash2(px * 0.19 + 31, py * 0.27 + 13);
+      const cx = px + 18 + Math.floor(hash2(px + 5, py - 3) * 32);
+      const cy = py + 18 + Math.floor(hash2(px - 9, py + 7) * 30);
+      if (th > 0.62) {
+        paintGroundHalo(ctx, cx, cy, 44 + th * 22, 26 + th * 12, '232, 244, 146', 0.085);
+      } else if (th < 0.28) {
+        paintGroundHalo(ctx, cx, cy, 40 + th * 24, 24 + th * 12, '14, 46, 18', 0.12);
       }
     }
   }
 
-  // 7. Luz poniente muy tenue sobre el borde superior del césped.
-  ctx.fillStyle = 'rgba(196, 224, 138, 0.12)';
-  ctx.fillRect(x, y, w, 1);
+  // Transición cálida donde la pradera se acerca a las playas curvas del sur y sureste
+  const beachWarmth = ctx.createLinearGradient(0, 825, 0, 926);
+  beachWarmth.addColorStop(0, 'rgba(214, 180, 126, 0)');
+  beachWarmth.addColorStop(1, 'rgba(210, 174, 118, 0.24)');
+  ctx.fillStyle = beachWarmth;
+  ctx.fillRect(minX, 825, maxX - minX, 104);
+
+  ctx.restore();
 }
 
-/* ------------------------------ SENDERO --------------------------- */
+/* ---------------------- RED DE CAMINOS EMPEDRADOS ----------------- */
 
-function paintPathTexture(
+interface PathSamplePoint {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+  t: number;
+}
+
+function subdividePathPoints(points: [number, number][]): PathSamplePoint[] {
+  if (points.length < 2) return [];
+  let pts: [number, number][] = points.map((p) => [p[0], p[1]]);
+  // Suavizado Chaikin conservando extremos exactos para conectar umbrales y cruces.
+  for (let iter = 0; iter < 3; iter++) {
+    const next: [number, number][] = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[i + 1];
+      next.push([ax * 0.75 + bx * 0.25, ay * 0.75 + by * 0.25]);
+      next.push([ax * 0.25 + bx * 0.75, ay * 0.25 + by * 0.75]);
+    }
+    next.push(pts[pts.length - 1]);
+    pts = next;
+  }
+
+  // Remuestreo uniforme cada ~3.5 px para trazos orgánicos continuos.
+  const dense: [number, number][] = [pts[0]];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const segLen = Math.hypot(bx - ax, by - ay);
+    const steps = Math.max(1, Math.ceil(segLen / 3.5));
+    for (let s = 1; s <= steps; s++) {
+      const u = s / steps;
+      dense.push([ax + (bx - ax) * u, ay + (by - ay) * u]);
+    }
+  }
+
+  const out: PathSamplePoint[] = [];
+  const lastIdx = Math.max(1, dense.length - 1);
+  for (let i = 0; i < dense.length; i++) {
+    const prev = dense[Math.max(0, i - 1)];
+    const next = dense[Math.min(dense.length - 1, i + 1)];
+    let dx = next[0] - prev[0];
+    let dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    out.push({
+      x: dense[i][0],
+      y: dense[i][1],
+      nx: -dy,
+      ny: dx,
+      t: i / lastIdx,
+    });
+  }
+  return out;
+}
+
+function smoothStep01(v: number): number {
+  const c = Math.max(0, Math.min(1, v));
+  return c * c * (3 - 2 * c);
+}
+
+function paintPathBedShadow(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
+  rx: number,
+  ry: number,
+  alphaScale: number
+): void {
+  if (alphaScale <= 0.02) return;
+  let rgb = '22, 46, 18';
+  let baseAlpha = 0.28;
+  if (y > 892 || !isPointOnNatalMeadow(x, y)) {
+    rgb = '118, 84, 44';
+    baseAlpha = 0.25;
+  } else if (x < 590 && y < 544) {
+    rgb = '42, 38, 32';
+    baseAlpha = 0.26;
+  }
+  ctx.fillStyle = `rgba(${rgb}, ${(baseAlpha * alphaScale).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.ellipse(x + 1.2, y + 1.8, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function applyPathWorldShading(
+  offCtx: CanvasRenderingContext2D,
+  left: number,
+  top: number,
   w: number,
   h: number,
-  seed: number,
-  horizontal: boolean
+  texture: IslaNatalPathTextureId
 ): void {
-  ctx.fillStyle = '#b28d5c';
-  ctx.fillRect(x, y, w, h);
+  offCtx.save();
+  offCtx.globalCompositeOperation = 'source-atop';
 
-  // Tierra apelmazada en manchas y calvas claras.
-  for (let py = y; py < y + h; py += 18) {
-    for (let px = x; px < x + w; px += 18) {
-      const th = hash2(px + 17 + seed, py - 39);
-      ctx.fillStyle = th > 0.6 ? 'rgba(198, 166, 116, 0.55)' : 'rgba(146, 111, 67, 0.45)';
-      ctx.fillRect(px + 1, py + 2, 9 + Math.floor(th * 7), 3);
-      ctx.fillRect(px + 8, py + 11, 6 + Math.floor(th * 6), 2);
+  // Luz cálida del oeste y sombra sutil hacia el este para integrar con la hora dorada.
+  const sunGrad = offCtx.createLinearGradient(0, 0, w, h);
+  sunGrad.addColorStop(0, 'rgba(255, 232, 178, 0.09)');
+  sunGrad.addColorStop(0.55, 'rgba(255, 224, 168, 0)');
+  sunGrad.addColorStop(1, 'rgba(20, 42, 28, 0.10)');
+  offCtx.fillStyle = sunGrad;
+  offCtx.fillRect(0, 0, w, h);
+
+  // Sombra fresca bajo el dosel de La Arboleda.
+  if (texture === 'arboleda' && left + w > 1060) {
+    const canopyX = Math.max(0, 1080 - left);
+    const canopyGrad = offCtx.createLinearGradient(canopyX, 0, w, 0);
+    canopyGrad.addColorStop(0, 'rgba(18, 44, 22, 0)');
+    canopyGrad.addColorStop(1, 'rgba(16, 42, 22, 0.16)');
+    offCtx.fillStyle = canopyGrad;
+    offCtx.fillRect(canopyX, 0, w - canopyX, h);
+  }
+
+  // Veladura cálida de arena barrida por la brisa en los tramos playeros y costeros.
+  if (texture === 'coastal' && top + h > 875) {
+    const sandY = Math.max(0, 875 - top);
+    const sandGrad = offCtx.createLinearGradient(0, sandY, 0, h);
+    sandGrad.addColorStop(0, 'rgba(214, 180, 126, 0)');
+    sandGrad.addColorStop(1, 'rgba(214, 180, 126, 0.34)');
+    offCtx.fillStyle = sandGrad;
+    offCtx.fillRect(0, sandY, w, h - sandY);
+  } else if (texture === 'port' && left + w > 1110 && top + h > 730) {
+    const sandX = Math.max(0, 1110 - left);
+    const sandGrad = offCtx.createLinearGradient(sandX, 0, w, h);
+    sandGrad.addColorStop(0, 'rgba(214, 180, 126, 0)');
+    sandGrad.addColorStop(1, 'rgba(214, 180, 126, 0.28)');
+    offCtx.fillStyle = sandGrad;
+    offCtx.fillRect(sandX, 0, w - sandX, h);
+  }
+
+  offCtx.restore();
+}
+
+function paintScallopedPlaza(
+  ctx: CanvasRenderingContext2D,
+  plaza: IslaNatalPathPlaza,
+  tiles: NatalPathTiles
+): void {
+  if (typeof document === 'undefined') return;
+  const pad = 18;
+  const left = Math.floor(plaza.x - plaza.rx - pad);
+  const top = Math.floor(plaza.y - plaza.ry - pad);
+  const w = Math.ceil((plaza.rx + pad) * 2);
+  const h = Math.ceil((plaza.ry + pad) * 2);
+
+  paintPathBedShadow(ctx, plaza.x, plaza.y, plaza.rx + 4, plaza.ry + 3.5, 0.95);
+
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const offCtx = off.getContext('2d');
+  if (!offCtx) return;
+
+  const cx = plaza.x - left;
+  const cy = plaza.y - top;
+
+  // Núcleo de piedra y corona festoneada de lajas irregulares en el borde.
+  offCtx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+  offCtx.beginPath();
+  offCtx.ellipse(cx, cy, plaza.rx * 0.78, plaza.ry * 0.78, 0, 0, Math.PI * 2);
+  offCtx.fill();
+
+  const lobes = 26;
+  for (let i = 0; i < lobes; i++) {
+    const ang = (i / lobes) * Math.PI * 2;
+    const h1 = hash2(Math.round(plaza.x) + i * 19, Math.round(plaza.y) - i * 13);
+    const h2 = hash2(Math.round(plaza.x) - i * 31, Math.round(plaza.y) + i * 7);
+    const distScale = 0.7 + h1 * 0.26;
+    const lx = cx + Math.cos(ang) * plaza.rx * distScale;
+    const ly = cy + Math.sin(ang) * plaza.ry * distScale;
+    const lr = 4.2 + h2 * 4.4;
+    offCtx.fillStyle = `rgba(255, 255, 255, ${(0.82 + h1 * 0.18).toFixed(2)})`;
+    offCtx.beginPath();
+    offCtx.ellipse(lx, ly, lr * 1.12, lr * 0.92, ang * 0.5, 0, Math.PI * 2);
+    offCtx.fill();
+  }
+
+  // Relleno con la textura del trayecto alineada en coordenadas de mundo.
+  offCtx.save();
+  offCtx.globalCompositeOperation = 'source-in';
+  offCtx.translate(-left, -top);
+  const img = tiles.images[plaza.texture];
+  const pattern = img ? offCtx.createPattern(img, 'repeat') : null;
+  offCtx.fillStyle = pattern ?? NATAL_PATH_FALLBACK_HEX[plaza.texture];
+  offCtx.fillRect(left, top, w, h);
+  offCtx.restore();
+
+  applyPathWorldShading(offCtx, left, top, w, h, plaza.texture);
+  ctx.drawImage(off, 0, 0, w, h, left, top, w, h);
+}
+
+function paintScallopedRoute(
+  ctx: CanvasRenderingContext2D,
+  route: IslaNatalPathRoute,
+  samples: PathSamplePoint[],
+  tiles: NatalPathTiles
+): void {
+  if (samples.length === 0 || typeof document === 'undefined') return;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of samples) {
+    if (s.x < minX) minX = s.x;
+    if (s.y < minY) minY = s.y;
+    if (s.x > maxX) maxX = s.x;
+    if (s.y > maxY) maxY = s.y;
+  }
+
+  const pad = Math.ceil(route.width * 0.9 + 18);
+  const left = Math.floor(minX - pad);
+  const top = Math.floor(minY - pad);
+  const w = Math.ceil(maxX - minX + pad * 2);
+  const h = Math.ceil(maxY - minY + pad * 2);
+
+  // 1. Lecho hundido de tierra/musgo/arena bajo el empedrado.
+  for (let i = 0; i < samples.length; i += 2) {
+    const s = samples[i];
+    let endFade = 1;
+    if (route.featherStart && s.t < 0.14) endFade = smoothStep01(s.t / 0.14);
+    if (route.featherEnd && s.t > 0.86) endFade = Math.min(endFade, smoothStep01((1 - s.t) / 0.14));
+    const halfW = route.width * 0.5 * (0.72 + 0.28 * endFade);
+    paintPathBedShadow(ctx, s.x, s.y, halfW + 3.2, halfW * 0.88 + 2.8, endFade * 0.55);
+  }
+
+  // 2. Máscara festoneada del sendero: centro continuo + piedras salientes en ambos bordes.
+  const off = document.createElement('canvas');
+  off.width = w;
+  off.height = h;
+  const offCtx = off.getContext('2d');
+  if (!offCtx) return;
+
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    let alpha = 1;
+    let widthScale = 1;
+    if (route.featherStart && s.t < 0.15) {
+      const f = smoothStep01(s.t / 0.15);
+      alpha = 0.22 + 0.78 * f;
+      widthScale = 0.62 + 0.38 * f;
     }
-  }
-
-  // Oclusión del borde: la tierra se hunde bajo el césped que la rodea.
-  const edge = Math.min(9, Math.floor(Math.min(w, h) * 0.18));
-  if (edge > 2) {
-    const top = ctx.createLinearGradient(0, y, 0, y + edge);
-    top.addColorStop(0, 'rgba(58, 40, 20, 0.3)');
-    top.addColorStop(1, 'rgba(58, 40, 20, 0)');
-    ctx.fillStyle = top;
-    ctx.fillRect(x, y, w, edge);
-    const left = ctx.createLinearGradient(x, 0, x + edge, 0);
-    left.addColorStop(0, 'rgba(72, 50, 26, 0.22)');
-    left.addColorStop(1, 'rgba(72, 50, 26, 0)');
-    ctx.fillStyle = left;
-    ctx.fillRect(x, y, edge, h);
-    const bottom = ctx.createLinearGradient(0, y + h - edge, 0, y + h);
-    bottom.addColorStop(0, 'rgba(58, 40, 20, 0)');
-    bottom.addColorStop(1, 'rgba(48, 32, 16, 0.26)');
-    ctx.fillStyle = bottom;
-    ctx.fillRect(x, y + h - edge, w, edge);
-    const right = ctx.createLinearGradient(x + w - edge, 0, x + w, 0);
-    right.addColorStop(0, 'rgba(58, 40, 20, 0)');
-    right.addColorStop(1, 'rgba(48, 32, 16, 0.2)');
-    ctx.fillStyle = right;
-    ctx.fillRect(x + w - edge, y, edge, h);
-  }
-
-  // Polvo y grano mineral: la superficie del sendero también tiene textura.
-  for (let py = y + 1; py < y + h; py += 3) {
-    for (let px = x + 1; px < x + w; px += 4) {
-      const th = hash2(px + 83, py + 151);
-      if (th < 0.52) continue;
-      ctx.fillStyle =
-        th > 0.9
-          ? 'rgba(240, 218, 172, 0.4)'
-          : th > 0.68
-            ? 'rgba(122, 88, 50, 0.28)'
-            : 'rgba(210, 180, 128, 0.2)';
-      ctx.fillRect(px, py, 1, 1);
+    if (route.featherEnd && s.t > 0.85) {
+      const f = smoothStep01((1 - s.t) / 0.15);
+      alpha = Math.min(alpha, 0.22 + 0.78 * f);
+      widthScale = Math.min(widthScale, 0.62 + 0.38 * f);
     }
-  }
 
-  // Dos huellas de carro/roderas siguiendo el eje del sendero.
-  const drawRut = (offset: number) => {
-    const len = horizontal ? w : h;
-    for (let i = 4; i < len - 4; i += 3) {
-      const t = i / len;
-      const wobble = Math.round(Math.sin(i * 0.13 + seed + offset) * 1.6);
-      const a = horizontal ? x + i : x + offset + wobble;
-      const b = horizontal ? y + offset + wobble : y + i;
-      ctx.fillStyle = 'rgba(128, 94, 54, 0.55)';
-      ctx.fillRect(a, b, horizontal ? 2 : 4, horizontal ? 4 : 2);
-      if (i % 9 === 0) {
-        ctx.fillStyle = 'rgba(214, 186, 137, 0.45)';
-        ctx.fillRect(a, b - (horizontal ? 1 : 0), horizontal ? 2 : 3, 1);
+    const wobble =
+      Math.sin(i * 0.29 + s.x * 0.03) * 1.35 + Math.cos(i * 0.17 + s.y * 0.03) * 0.95;
+    const halfW = Math.max(6, route.width * 0.5 * widthScale + wobble);
+    const sx = s.x - left;
+    const sy = s.y - top;
+
+    offCtx.fillStyle = `rgba(255, 255, 255, ${alpha.toFixed(3)})`;
+    offCtx.beginPath();
+    offCtx.arc(sx, sy, halfW * 0.76, 0, Math.PI * 2);
+    offCtx.fill();
+
+    // Lóbulos laterales de piedra para evitar bordes rectos artificiales.
+    if (i % 2 === 0) {
+      for (const side of [-1, 1] as const) {
+        const h1 = hash2(i * 23 + (side > 0 ? 7 : 53), Math.round(s.x + s.y));
+        if (h1 < 0.18) continue;
+        const h2 = hash2(i * 41 + (side > 0 ? 97 : 13), Math.round(s.x - s.y));
+        const offset = halfW * (0.58 + h1 * 0.36);
+        const lx = sx + s.nx * side * offset;
+        const ly = sy + s.ny * side * offset;
+        const lr = 3.4 + h2 * 3.8;
+        offCtx.fillStyle = `rgba(255, 255, 255, ${(alpha * (0.78 + h1 * 0.22)).toFixed(3)})`;
+        offCtx.beginPath();
+        offCtx.ellipse(lx, ly, lr * 1.15, lr * 0.9, h1 * Math.PI, 0, Math.PI * 2);
+        offCtx.fill();
       }
     }
-  };
-  if (horizontal) {
-    drawRut(Math.max(6, Math.round(h * 0.32)));
-    drawRut(Math.max(6, Math.round(h * 0.66)));
-  } else {
-    drawRut(Math.max(6, Math.round(w * 0.32)));
-    drawRut(Math.max(6, Math.round(w * 0.66)));
   }
 
-  // Piedras encastradas con bisel de luz y sombra.
-  for (let py = y + 5; py < y + h - 4; py += 15) {
-    for (let px = x + 6; px < x + w - 6; px += 21) {
-      const th = hash2(px + 5, py + 17 + seed);
-      if (th < 0.42) continue;
-      const sw = 4 + Math.floor(th * 5);
-      const sh = 2 + Math.floor(th * 3);
-      ctx.fillStyle = 'rgba(120, 88, 52, 0.55)';
-      ctx.fillRect(px + 1, py + sh - 1, sw, 1);
-      ctx.fillStyle = th > 0.72 ? '#cdb083' : '#a8875a';
-      ctx.fillRect(px, py, sw, sh);
-      ctx.fillStyle = '#ead6a9';
-      ctx.fillRect(px, py, sw - 1, 1);
-      ctx.fillStyle = 'rgba(94, 68, 40, 0.5)';
-      ctx.fillRect(px + sw - 1, py, 1, sh);
+  // 3. Aplicación del patrón seamless en coordenadas de mundo.
+  offCtx.save();
+  offCtx.globalCompositeOperation = 'source-in';
+  offCtx.translate(-left, -top);
+  const img = tiles.images[route.texture];
+  const pattern = img ? offCtx.createPattern(img, 'repeat') : null;
+  offCtx.fillStyle = pattern ?? NATAL_PATH_FALLBACK_HEX[route.texture];
+  offCtx.fillRect(left, top, w, h);
+  offCtx.restore();
+
+  applyPathWorldShading(offCtx, left, top, w, h, route.texture);
+  ctx.drawImage(off, 0, 0, w, h, left, top, w, h);
+}
+
+/** Peldaños de piedra tallada donde el sendero sube al Alto de las Rocas (y ≈ 542). */
+function paintHighlandRampSteps(ctx: CanvasRenderingContext2D): void {
+  const steps = [
+    { cx: 470, y: 538, w: 30 },
+    { cx: 472, y: 543, w: 31 },
+    { cx: 474, y: 548, w: 32 },
+    { cx: 476, y: 553, w: 32 },
+    { cx: 478, y: 558, w: 30 },
+  ];
+
+  // Muretes laterales de contención integrados con el acantilado de la meseta.
+  for (let i = 0; i < steps.length; i++) {
+    const st = steps[i];
+    const lx = Math.round(st.cx - st.w * 0.5 - 4);
+    const rx = Math.round(st.cx + st.w * 0.5);
+    ctx.fillStyle = '#5c574d';
+    ctx.fillRect(lx, st.y - 1, 5, 6);
+    ctx.fillRect(rx, st.y - 1, 5, 6);
+    ctx.fillStyle = '#a49b88';
+    ctx.fillRect(lx, st.y - 1, 4, 2);
+    ctx.fillRect(rx + 1, st.y - 1, 4, 2);
+  }
+
+  for (let i = 0; i < steps.length; i++) {
+    const st = steps[i];
+    const sx = Math.round(st.cx - st.w * 0.5);
+    // Sombra de contrahuella
+    ctx.fillStyle = 'rgba(34, 30, 24, 0.62)';
+    ctx.fillRect(sx, st.y + 3, st.w, 2);
+    // Huella de losa de montaña
+    ctx.fillStyle = i % 2 === 0 ? '#8c8576' : '#7f796b';
+    ctx.fillRect(sx, st.y, st.w, 3);
+    // Junta intermedia de sillar
+    const split = sx + 11 + ((i * 7) % 9);
+    ctx.fillStyle = 'rgba(44, 40, 34, 0.55)';
+    ctx.fillRect(split, st.y, 1, 3);
+    // Bisel soleado superior
+    ctx.fillStyle = 'rgba(226, 214, 186, 0.62)';
+    ctx.fillRect(sx + 1, st.y, st.w - 2, 1);
+    // Musgo en las esquinas del peldaño
+    if (i % 2 === 1) {
+      ctx.fillStyle = 'rgba(96, 138, 72, 0.58)';
+      ctx.fillRect(sx + 1, st.y + 2, 5, 1);
+    } else {
+      ctx.fillStyle = 'rgba(96, 138, 72, 0.52)';
+      ctx.fillRect(sx + st.w - 6, st.y + 2, 5, 1);
+    }
+  }
+}
+
+/** Briznas de césped, musgo, arena y guijarros que abrazan los bordes de cada trayecto. */
+function paintRouteEdgeIntegration(
+  ctx: CanvasRenderingContext2D,
+  route: IslaNatalPathRoute,
+  samples: PathSamplePoint[]
+): void {
+  for (let i = 2; i < samples.length - 2; i += 3) {
+    const s = samples[i];
+    const halfW = route.width * 0.5;
+
+    for (const side of [-1, 1] as const) {
+      const h1 = hash2(i * 37 + (side > 0 ? 11 : 73), Math.round(s.x * 2 + s.y));
+      if (h1 < 0.34) continue;
+      const edgeDist = halfW * (0.82 + (h1 - 0.34) * 0.42);
+      const ex = Math.round(s.x + s.nx * side * edgeDist);
+      const ey = Math.round(s.y + s.ny * side * edgeDist);
+
+      const onBeachMargin =
+        ey > 892 || (!isPointOnNatalMeadow(ex, ey) && !(ex < 588 && ey < 540));
+      if (onBeachMargin) {
+        // Tramos sobre arena: lenguas de arena ocre-dorada y granos sueltos que montan las piedras.
+        ctx.fillStyle = h1 > 0.68 ? 'rgba(228, 198, 146, 0.78)' : 'rgba(196, 158, 106, 0.68)';
+        ctx.fillRect(ex - 1, ey, 3, 2);
+        ctx.fillStyle = 'rgba(246, 224, 178, 0.48)';
+        ctx.fillRect(ex, ey, 2, 1);
+        if (h1 > 0.78) {
+          const px = Math.round(s.x + s.nx * side * (halfW + 3 + (h1 - 0.78) * 14));
+          const py = Math.round(s.y + s.ny * side * (halfW + 3 + (h1 - 0.78) * 14));
+          ctx.fillStyle = 'rgba(122, 88, 48, 0.46)';
+          ctx.fillRect(px, py + 1, 3, 2);
+          ctx.fillStyle = '#c4ae8c';
+          ctx.fillRect(px, py, 3, 2);
+        }
+      } else if (ex < 588 && ey < 540) {
+        // Meseta del Alto de las Rocas: líquenes y esquirlas minerales.
+        ctx.fillStyle = h1 > 0.66 ? 'rgba(116, 152, 90, 0.52)' : 'rgba(92, 86, 76, 0.48)';
+        ctx.fillRect(ex - 1, ey, 3, 2);
+        if (h1 > 0.8) {
+          ctx.fillStyle = '#afa693';
+          ctx.fillRect(ex + side * 2, ey - 1, 2, 1);
+        }
+      } else {
+        // Pradera y Arboleda: briznas de hierba que montan sobre las piedras del borde.
+        const darkGrass = route.texture === 'arboleda' ? '#1f4e1c' : '#295e20';
+        const midGrass = route.texture === 'arboleda' ? '#387624' : '#468a2c';
+        const tipGrass = route.texture === 'arboleda' ? '#6db03b' : '#82c444';
+        ctx.fillStyle = darkGrass;
+        ctx.fillRect(ex - 1, ey, 3, 2);
+        ctx.fillStyle = midGrass;
+        ctx.fillRect(ex, ey - 2, 2, 3);
+        ctx.fillStyle = tipGrass;
+        ctx.fillRect(ex, ey - 3, 1, 2);
+        if (h1 > 0.82) {
+          // Piedrecilla suelta junto al borde en la hierba
+          const px = Math.round(s.x + s.nx * side * (halfW + 3.5));
+          const py = Math.round(s.y + s.ny * side * (halfW + 3.5));
+          ctx.fillStyle = 'rgba(24, 48, 18, 0.42)';
+          ctx.fillRect(px, py + 1, 2, 2);
+          ctx.fillStyle = NATAL_PATH_FALLBACK_HEX[route.texture];
+          ctx.fillRect(px, py, 2, 1);
+        }
+      }
+    }
+
+    // Brotes diminutos de musgo entre juntas en tramos húmedos o boscosos.
+    const hm = hash2(i * 59 + 17, Math.round(s.x - s.y * 2));
+    if (s.y <= 886 && hm > (route.texture === 'arboleda' ? 0.76 : 0.88)) {
+      const mx = Math.round(s.x + s.nx * ((hm - 0.82) * route.width * 1.4));
+      const my = Math.round(s.y + s.ny * ((hm - 0.82) * route.width * 1.4));
+      ctx.fillStyle = 'rgba(74, 128, 50, 0.46)';
+      ctx.fillRect(mx, my, 2, 1);
+    }
+  }
+}
+
+function paintIslandPaths(ctx: CanvasRenderingContext2D): void {
+  const tiles = ensureNatalPathTiles();
+  const sampledRoutes = ISLA_NATAL_PATH_ROUTES.map((route) => ({
+    route,
+    samples: subdividePathPoints(route.points),
+  }));
+
+  // 1. Plazas base de cruces y umbrales para asentar los empalmes.
+  for (const plaza of ISLA_NATAL_PATH_PLAZAS) {
+    if (plaza.id === 'plaza-crucero-central' || plaza.id === 'plaza-crucero-norte') {
+      paintScallopedPlaza(ctx, plaza, tiles);
     }
   }
 
-  // Gravilla y raíces que asoman.
-  for (let py = y + 3; py < y + h - 2; py += 6) {
-    for (let px = x + 2; px < x + w - 2; px += 8) {
-      const th = hash2(px + 89, py - 41);
-      if (th < 0.6) continue;
-      ctx.fillStyle = th > 0.85 ? 'rgba(232, 208, 162, 0.6)' : 'rgba(140, 104, 62, 0.55)';
-      ctx.fillRect(px, py, 1 + (th > 0.9 ? 1 : 0), 1);
+  // 2. Trazado continuo de cada trayecto con su textura correspondiente.
+  for (const { route, samples } of sampledRoutes) {
+    paintScallopedRoute(ctx, route, samples, tiles);
+  }
+
+  // 3. Plazas terminales (umbral de Casa de Pixel, muelle norte, cobertizo Pong y mirador rocoso).
+  for (const plaza of ISLA_NATAL_PATH_PLAZAS) {
+    if (plaza.id !== 'plaza-crucero-central' && plaza.id !== 'plaza-crucero-norte') {
+      paintScallopedPlaza(ctx, plaza, tiles);
     }
   }
 
-  // Grietas de sequía.
-  for (let py = y + 9; py < y + h - 8; py += 26) {
-    for (let px = x + 12; px < x + w - 12; px += 34) {
-      if (hash2(px, py) < 0.7) continue;
-      ctx.fillStyle = 'rgba(108, 78, 44, 0.45)';
-      ctx.fillRect(px, py, 1, 5);
-      ctx.fillRect(px + 1, py + 4, 4, 1);
-      ctx.fillRect(px + 5, py + 2, 1, 3);
-    }
+  // 4. Escalones tallados en la subida al Alto de las Rocas.
+  paintHighlandRampSteps(ctx);
+
+  // 5. Integración fina de césped, musgo y arena sobre los bordes del empedrado.
+  for (const { route, samples } of sampledRoutes) {
+    paintRouteEdgeIntegration(ctx, route, samples);
   }
 }
 
@@ -916,117 +2008,194 @@ function paintRockTexture(
   }
 }
 
-/* --------------------- FRANJAS DE TRANSICIÓN ---------------------- */
+/* --------------------- TRANSICIONES Y ACANTILADOS CURVOS ---------- */
 
-const SURFACE_PRIORITY: Record<IslaNatalSurface, number> = {
-  sand: 0,
-  grass: 1,
-  path: 2,
-  rock: 3,
-};
+/**
+ * Integra de forma natural el borde curvo de la pradera con las playas de arena
+ * y las riberas costeras mediante matas dunares, lenguas de arena y guijarros.
+ */
+function paintCurvedMeadowBeachFringe(ctx: CanvasRenderingContext2D): void {
+  const n = NATAL_MEADOW_RING.length;
+  for (let i = 0; i < n; i++) {
+    const [x, y] = NATAL_MEADOW_RING[i];
+    if (!pointInPolygonRing(x, y, NATAL_ISLAND_RING)) continue;
+    if (pointInPolygonRing(x, y, NATAL_ROCK_PLATEAU_RING)) continue;
 
-function paintSurfaceFringe(ctx: CanvasRenderingContext2D, r: IslaNatalWalkRect): void {
-  const paint = (x: number, y: number, nx: number, ny: number) => {
-    const other = isIslaNatalPointOnLand(x + nx * 4, y + ny * 4);
-    if (!other || other.surface === r.surface) return;
-    if (SURFACE_PRIORITY[r.surface] <= SURFACE_PRIORITY[other.surface]) return;
-    const th = hash2(Math.round(x) + 331 + nx * 7, Math.round(y) + 977 + ny * 11);
-    if (th < 0.32) return;
-    const px = Math.round(x + nx * 2);
-    const py = Math.round(y + ny * 2);
+    const prev = NATAL_MEADOW_RING[(i - 1 + n) % n];
+    const next = NATAL_MEADOW_RING[(i + 1) % n];
+    let dx = next[0] - prev[0];
+    let dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    // En un anillo horario (coordenadas de pantalla Y hacia abajo), la normal exterior es (dy, -dx)
+    const nx = dy;
+    const ny = -dx;
 
-    // Costura oscura de oclusión sobre la superficie inferior: los bordes
-    // ya no parecen calcomanías, como en las losetas GBC del Origen.
-    const seamX = Math.round(x + nx * 1);
-    const seamY = Math.round(y + ny * 1);
-    if (r.surface === 'grass') {
-      ctx.fillStyle = 'rgba(22, 50, 24, 0.42)';
-      ctx.fillRect(
-        seamX - (nx === 0 ? 1 : 0),
-        seamY - (ny === 0 ? 1 : 0),
-        nx === 0 ? 3 : 1,
-        ny === 0 ? 2 : 3
-      );
-      // Matas que muerden el borde de arena o sendero.
-      ctx.fillStyle = th > 0.66 ? '#6fba5c' : '#549e44';
-      ctx.fillRect(px + nx * 4 - 1, py + ny * 4 - 2, 1, 3);
-      ctx.fillRect(px + nx * 7 + 1, py + ny * 7 - 3, 1, 4);
-      ctx.fillRect(px + nx * 10 - 2, py + ny * 10 - 1, 1, 2);
-      ctx.fillStyle = '#a4dc80';
-      ctx.fillRect(px + nx * 7 + 1, py + ny * 7 - 3, 1, 1);
-      ctx.fillStyle = 'rgba(26, 62, 29, 0.5)';
-      ctx.fillRect(px - 2, py + 1, 5, 1);
-    } else if (r.surface === 'path') {
-      ctx.fillStyle = 'rgba(66, 48, 26, 0.5)';
-      ctx.fillRect(
-        seamX - (nx === 0 ? 1 : 0),
-        seamY - (ny === 0 ? 1 : 0),
-        nx === 0 ? 3 : 1,
-        ny === 0 ? 2 : 3
-      );
-      // Tierra y gravilla que invaden la hierba.
-      ctx.fillStyle = 'rgba(146, 111, 67, 0.7)';
-      ctx.fillRect(px + nx * 5, py + ny * 5, nx === 0 ? 2 : 3, ny === 0 ? 3 : 2);
-      ctx.fillStyle = '#cdb083';
-      ctx.fillRect(px + nx * 8, py + ny * 8, 2, 1);
-      ctx.fillStyle = 'rgba(94, 68, 40, 0.5)';
-      ctx.fillRect(px + nx * 8 + 2, py + ny * 8 + 1, 2, 1);
-    } else if (r.surface === 'rock') {
-      ctx.fillStyle = 'rgba(40, 36, 30, 0.55)';
-      ctx.fillRect(
-        seamX - (nx === 0 ? 1 : 0),
-        seamY - (ny === 0 ? 1 : 0),
-        nx === 0 ? 3 : 1,
-        ny === 0 ? 2 : 3
-      );
-      // Musgo y esquirlas al pie de la meseta.
-      ctx.fillStyle = 'rgba(116, 152, 90, 0.6)';
-      ctx.fillRect(px + nx * 4 - 2, py + ny * 4, 5, 2);
-      ctx.fillStyle = '#8d8779';
-      ctx.fillRect(px + nx * 4 + 1, py + ny * 4 + 2, 3, 2);
-      ctx.fillStyle = 'rgba(255, 244, 220, 0.35)';
-      ctx.fillRect(px + nx * 4 + 1, py + ny * 4 + 2, 2, 1);
+    const th = hash2(Math.round(x * 2) + i * 17, Math.round(y * 2) - i * 13);
+    if (i % 3 === 0) {
+      paintGroundHalo(ctx, x + nx * 4, y + ny * 4, 15 + th * 11, 9 + th * 6, '212, 178, 124', 0.18);
     }
-  };
+    if (th < 0.28) continue;
 
-  for (let x = r.x + 3; x < r.x + r.w - 3; x += 9) {
-    paint(x, r.y, 0, -1);
-    paint(x, r.y + r.h, 0, 1);
-  }
-  for (let y = r.y + 3; y < r.y + r.h - 3; y += 9) {
-    paint(r.x, y, -1, 0);
-    paint(r.x + r.w, y, 1, 0);
+    const sx = Math.round(x + nx * 1.5);
+    const sy = Math.round(y + ny * 1.5);
+    // Sombra suave de contacto del tapiz herbáceo sobre la nueva arena granular
+    ctx.fillStyle = 'rgba(38, 52, 22, 0.34)';
+    ctx.fillRect(sx - 1, sy, 3, 2);
+
+    // Matas costeras escalonadas que avanzan hacia la arena
+    const tx = Math.round(x + nx * (2.5 + th * 4.5));
+    const ty = Math.round(y + ny * (2.5 + th * 4.5));
+    ctx.fillStyle = th > 0.64 ? '#4d8f2d' : '#356d22';
+    ctx.fillRect(tx - 1, ty - 2, 2, 3);
+    ctx.fillStyle = '#7ec043';
+    ctx.fillRect(tx, ty - 3, 1, 2);
+
+    if (th > 0.62) {
+      const tx2 = Math.round(x + nx * (6 + th * 5) + dx * 3);
+      const ty2 = Math.round(y + ny * (6 + th * 5) + dy * 3);
+      ctx.fillStyle = '#3b7525';
+      ctx.fillRect(tx2, ty2 - 1, 2, 2);
+      ctx.fillStyle = '#8ad04e';
+      ctx.fillRect(tx2, ty2 - 2, 1, 1);
+    }
+
+    // Lengua fina de arena dorada-ocre barrida por la brisa hacia el césped
+    if (th > 0.46 && th < 0.82) {
+      const bx = Math.round(x - nx * (2 + th * 4.5));
+      const by = Math.round(y - ny * (2 + th * 4.5));
+      ctx.fillStyle = 'rgba(216, 182, 128, 0.58)';
+      ctx.fillRect(bx - 1, by, 3, 2);
+      ctx.fillStyle = 'rgba(242, 216, 168, 0.40)';
+      ctx.fillRect(bx, by, 2, 1);
+    }
   }
 }
 
-function paintRockCliffs(ctx: CanvasRenderingContext2D, r: IslaNatalWalkRect): void {
-  const faceH = 18;
-  for (let x = r.x; x < r.x + r.w; x += 5) {
-    const below = isIslaNatalPointOnLand(x + 2, r.y + r.h + 5);
-    if (below && below.surface === 'rock') continue;
-    const th = hash2(x + 11, r.y + r.h);
-    const hh = faceH + Math.floor(hash2(x + 5, r.y + 3) * 5) - 2;
-    ctx.fillStyle = th > 0.55 ? '#6f6a5e' : '#7a7468';
-    ctx.fillRect(x, r.y + r.h, 5, hh);
-    ctx.fillStyle = '#a49c8b';
-    ctx.fillRect(x, r.y + r.h, 5, 2);
-    ctx.fillStyle = 'rgba(226, 216, 192, 0.6)';
-    ctx.fillRect(x, r.y + r.h, 5, 1);
-    ctx.fillStyle = 'rgba(52, 48, 42, 0.55)';
-    ctx.fillRect(x, r.y + r.h + 6, 5, 2);
-    ctx.fillRect(x, r.y + r.h + 13, 5, 2);
-    if (th > 0.78) {
-      ctx.fillStyle = 'rgba(40, 36, 30, 0.6)';
-      ctx.fillRect(x + 2, r.y + r.h + 4, 1, hh - 6);
+/**
+ * Dibuja los acantilados estratificados y bordes rocosos siguiendo la silueta
+ * curva del Alto de las Rocas y su terraza superior (respetando la escalinata tallada).
+ */
+function paintCurvedCliffArc(
+  ctx: CanvasRenderingContext2D,
+  ring: readonly Vec2[],
+  baseFaceH: number,
+  gapMinX: number,
+  gapMaxX: number,
+  minBrowseY: number
+): void {
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const [x, y] = ring[i];
+    if (y < minBrowseY) continue;
+    if (!pointInPolygonRing(x, y + 6, NATAL_ISLAND_RING)) continue;
+
+    const prev = ring[(i - 1 + n) % n];
+    const next = ring[(i + 1) % n];
+    const segLen = Math.hypot(next[0] - x, next[1] - y);
+    let dx = next[0] - prev[0];
+    let dy = next[1] - prev[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    const nx = dy;
+    const ny = -dx;
+
+    const steps = Math.max(1, Math.ceil(segLen / 3));
+    for (let s = 0; s < steps; s++) {
+      const u = s / steps;
+      const px = Math.round(x + (next[0] - x) * u);
+      const py = Math.round(y + (next[1] - y) * u);
+      if (px >= gapMinX && px <= gapMaxX && ny > 0.15) continue;
+
+      const th = hash2(px + 13, py - 29);
+      if (ny > 0.26) {
+        // Cara de acantilado orientada al sur/sureste con estratos minerales y musgo
+        const hh = Math.max(7, Math.round(baseFaceH * (0.58 + 0.48 * ny) + (th - 0.5) * 4));
+        ctx.fillStyle = 'rgba(14, 24, 16, 0.20)';
+        ctx.fillRect(px, py + hh, 4, 4);
+
+        ctx.fillStyle = th > 0.54 ? '#6f6a5e' : '#7a7468';
+        ctx.fillRect(px, py, 4, hh);
+        ctx.fillStyle = '#a49c8b';
+        ctx.fillRect(px, py, 4, 2);
+        ctx.fillStyle = 'rgba(226, 216, 192, 0.62)';
+        ctx.fillRect(px, py, 4, 1);
+
+        if (hh >= 12) {
+          ctx.fillStyle = 'rgba(52, 48, 42, 0.55)';
+          ctx.fillRect(px, py + Math.round(hh * 0.36), 4, 2);
+          ctx.fillRect(px, py + Math.round(hh * 0.72), 4, 2);
+        }
+        if (th > 0.76) {
+          ctx.fillStyle = 'rgba(40, 36, 30, 0.60)';
+          ctx.fillRect(px + 1, py + 3, 1, Math.max(3, hh - 5));
+        }
+        if (th < 0.26) {
+          ctx.fillStyle = 'rgba(104, 144, 78, 0.55)';
+          ctx.fillRect(px, py + 1, 3, 2);
+        }
+        ctx.fillStyle = 'rgba(18, 26, 18, 0.36)';
+        ctx.fillRect(px, py + hh - 2, 4, 2);
+      } else if (nx > 0.25 && pointInPolygonRing(px + 6, py, NATAL_ISLAND_RING)) {
+        // Talud lateral este hacia Caleta de las Rocas: esquirlas y musgo
+        if (th > 0.45) {
+          ctx.fillStyle = 'rgba(42, 38, 32, 0.52)';
+          ctx.fillRect(px, py, 3, 3);
+          ctx.fillStyle = '#968f7f';
+          ctx.fillRect(px - 1, py, 2, 2);
+          if (th > 0.72) {
+            ctx.fillStyle = 'rgba(112, 148, 86, 0.55)';
+            ctx.fillRect(px + 1, py + 1, 3, 2);
+          }
+        }
+      }
     }
-    ctx.fillStyle = 'rgba(18, 26, 18, 0.35)';
-    ctx.fillRect(x, r.y + r.h + hh - 2, 5, 2);
   }
-  ctx.fillStyle = 'rgba(12, 22, 14, 0.16)';
-  ctx.fillRect(r.x, r.y + r.h + faceH, r.w, 5);
+}
+
+function paintOrganicRockHeadland(ctx: CanvasRenderingContext2D): void {
+  // 1. Meseta principal y escollos rocosos recortados a la silueta costera
+  ctx.save();
+  ctx.beginPath();
+  tracePolygonRing(ctx, NATAL_ROCK_PLATEAU_RING);
+  for (const sk of NATAL_SKERRY_RINGS) {
+    if (sk.surface === 'rock') tracePolygonRing(ctx, sk.ring);
+  }
+  ctx.clip();
+  paintRockTexture(ctx, 210, 210, 420, 360, 41);
+  paintRockTexture(ctx, 412, 944, 40, 32, 73);
+  ctx.restore();
+
+  // 2. Terraza alta curva del Mirador del Alto de las Rocas
+  ctx.save();
+  ctx.beginPath();
+  tracePolygonRing(ctx, NATAL_ROCK_CREST_RING);
+  ctx.clip();
+  paintRockTexture(ctx, 328, 240, 224, 132, 89);
+  ctx.fillStyle = 'rgba(236, 226, 200, 0.08)';
+  ctx.fillRect(328, 240, 224, 132);
+  ctx.restore();
+
+  // 3. Frentes de acantilado curvos con paso abierto para el sendero empedrado
+  paintCurvedCliffArc(ctx, NATAL_ROCK_CREST_RING, 11, 434, 472, 324);
+  paintCurvedCliffArc(ctx, NATAL_ROCK_PLATEAU_RING, 18, 451, 489, 470);
 }
 
 /* ----------------- COSTA, BAJÍO Y MAREA PRERENDERIZADOS ----------- */
+
+/** Anchura variable del bajío turquesa: amplia en bahías/playas y más abrupta en acantilados. */
+function localShelfRange(wx: number, wy: number, surface: IslaNatalSurface): number {
+  const macro =
+    Math.sin(wx * 0.0085 + 0.7) * 11 + Math.cos(wy * 0.011 - 0.4) * 9;
+  if (surface === 'rock') {
+    return Math.max(44, Math.min(72, 54 + macro * 0.65));
+  }
+  // Lagunas turquesas más generosas en Playa del Aurora, Ensenada del Este y Punta del Oleaje
+  const southLagoon = wy > 720 ? 14 : 0;
+  return Math.max(66, Math.min(SHELF_RANGE, 84 + southLagoon + macro));
+}
 
 function paintCoastBand(ctx: CanvasRenderingContext2D, field: NatalCoastField): void {
   const step = 2;
@@ -1038,68 +2207,67 @@ function paintCoastBand(ctx: CanvasRenderingContext2D, field: NatalCoastField): 
       const wx = px - field.pad + step * 0.5;
       const wy = py - field.pad + step * 0.5;
       const d = sampleDistancePx(field, wx, wy);
-      if (d > SHELF_RANGE + 24) continue;
 
-      const extra = coastEdgeExtra(wx, wy);
-      const dd = d - extra;
-      const th = hash2(px + 17, py + 89);
-
-      if (dd <= 0) {
-        if (d <= 0.9) {
-          // Interior de la isla: sólo la orla húmeda cercana a la costa.
-          const inner = sampleInnerDistancePx(field, wx, wy);
-          if (inner < 16) {
-            const idx = sampleRectIndex(field, wx, wy);
-            const surface = idx >= 0 ? ISLA_NATAL_WALK_RECTS[idx].surface : 'sand';
-            ctx.fillStyle = wetRimColor(surface, 1 - inner / 16);
-            ctx.fillRect(px, py, step, step);
-          }
-          continue;
-        }
-        // Franja orgánica que sobresale de la tierra caminable.
-        const idx = sampleRectIndex(field, wx, wy);
-        const surface = idx >= 0 ? ISLA_NATAL_WALK_RECTS[idx].surface : 'sand';
-        const dry = dd < -6;
-        ctx.fillStyle = dry ? SURFACE_BASE[surface] : SURFACE_WET[surface];
-        ctx.fillRect(px, py, step, step);
-        if (dry && th > 0.7) {
-          ctx.fillStyle = SURFACE_LIGHT[surface];
-          ctx.fillRect(px, py, 1, 1);
-        }
-        if (!dry && th > 0.55) {
-          ctx.fillStyle = 'rgba(226, 250, 246, 0.3)';
-          ctx.fillRect(px, py, 2, 1);
-        }
-        if (d < 13) {
-          ctx.fillStyle = wetRimColor(surface, 1 - d / 13);
+      if (d <= 0.05) {
+        // Tierra firme: pintamos la orla húmeda de marea y el filo vivo de espuma/roca mojada
+        const inner = sampleInnerDistancePx(field, wx, wy);
+        if (inner < 17) {
+          const surface = sampleSurfaceAt(field, wx, wy);
+          ctx.fillStyle = wetRimColor(surface, 1 - inner / 17);
           ctx.fillRect(px, py, step, step);
+          const th = hash2(px + 29, py - 61);
+          if (inner < 3.2 && th > 0.46) {
+            ctx.fillStyle =
+              surface === 'rock'
+                ? 'rgba(210, 238, 236, 0.34)'
+                : 'rgba(255, 248, 224, 0.36)';
+            ctx.fillRect(px, py, step, 1);
+          }
         }
         continue;
       }
 
-      // Bajío: bandas turquesa con ondulación propia y degradado hacia mar abierto.
+      // Fuera de la silueta erosionada recortamos cualquier excedente de textura
+      if (d < 34) {
+        ctx.clearRect(px, py, step, step);
+      }
+      if (d > SHELF_RANGE + 18) continue;
+
+      const surface = sampleSurfaceAt(field, wx, wy);
+      const maxShelf = localShelfRange(wx, wy, surface);
+      const th = hash2(px + 17, py + 89);
       const wobble =
-        Math.sin(wx * 0.058 + wy * 0.021) * 2.4 + Math.sin(wy * 0.079 - wx * 0.013) * 1.8;
-      const band = dd + wobble;
-      if (band > SHELF_RANGE) continue;
-      if (band > SHELF_RANGE - 24) {
-        const chance = (band - (SHELF_RANGE - 24)) / 28;
+        Math.sin(wx * 0.052 + wy * 0.023) * 2.8 + Math.sin(wy * 0.074 - wx * 0.015) * 2.1;
+      const band = d + wobble;
+      if (band > maxShelf) continue;
+      if (band > maxShelf - 24) {
+        const chance = (band - (maxShelf - 24)) / 26;
         if (th < chance) continue;
       }
-      ctx.fillStyle = shelfColor(band);
+
+      const normBand = (band / maxShelf) * 84;
+      ctx.fillStyle = shelfColor(normBand);
       ctx.fillRect(px, py, step, step);
 
-      // Detalle submarino: destellos, praderas de posidonia y arena sumergida.
+      // Bancos de arena sumergidos bajo el agua cristalina de las playas curvas
+      if (surface === 'sand' && band > 3 && band < 28) {
+        const sandGlow = (1 - band / 28) * 0.2;
+        ctx.fillStyle = `rgba(222, 190, 134, ${sandGlow.toFixed(3)})`;
+        ctx.fillRect(px, py, step, step);
+      }
+
+      // Detalle submarino: destellos, praderas de posidonia y arrecifes someros
       if (band < 26 && th > 0.88) {
-        ctx.fillStyle = 'rgba(224, 255, 250, 0.4)';
+        ctx.fillStyle = 'rgba(224, 255, 250, 0.42)';
         ctx.fillRect(px, py, 2 + Math.floor(th * 3), 1);
-      } else if (band > 8 && band < 34 && th < 0.035) {
-        ctx.fillStyle = 'rgba(18, 78, 68, 0.35)';
-        ctx.fillRect(px + 1, py + 1, 3, 2);
+      } else if (band > 8 && band < 38 && th < 0.036) {
+        ctx.fillStyle =
+          surface === 'rock' ? 'rgba(22, 58, 72, 0.42)' : 'rgba(18, 78, 68, 0.35)';
+        ctx.fillRect(px, py, 3, 2);
       }
       if (band < 12 && th > 0.74) {
-        ctx.fillStyle = 'rgba(214, 240, 214, 0.32)';
-        ctx.fillRect(px + 1, py, 2, 1);
+        ctx.fillStyle = 'rgba(214, 244, 228, 0.34)';
+        ctx.fillRect(px, py, 2, 1);
       }
     }
   }
@@ -1113,42 +2281,47 @@ function paintGroundLayer(field: NatalCoastField): HTMLCanvasElement {
   if (!ctx) return canvas;
   ctx.imageSmoothingEnabled = false;
 
-  // Las texturas de superficie se dibujan en coordenadas de mundo: hay que
-  // compensar el margen extra de la capa (la costa ya lo resta por su cuenta).
   ctx.save();
   ctx.translate(field.pad, field.pad);
 
-  // 1. Superficies caminables con textura artesanal.
+  // 1. Manto continuo de arena dorada enmascarado a la silueta orgánica (+ margen de erosión)
+  ctx.save();
+  ctx.beginPath();
+  tracePolygonRing(ctx, NATAL_ISLAND_RING);
+  for (const sk of NATAL_SKERRY_RINGS) tracePolygonRing(ctx, sk.ring);
+  ctx.lineWidth = 22;
+  ctx.lineJoin = 'round';
+  ctx.fillStyle = '#d4b27c';
+  ctx.strokeStyle = '#d4b27c';
+  ctx.fill();
+  ctx.stroke();
   for (const r of ISLA_NATAL_WALK_RECTS) {
-    const seed = hash2(Math.round(r.x), Math.round(r.y)) * 100;
-    if (r.surface === 'sand') {
-      paintSandTexture(ctx, r.x, r.y, r.w, r.h, seed);
-    } else if (r.surface === 'grass') {
-      paintGrassTexture(ctx, r.x, r.y, r.w, r.h, seed);
-    } else if (r.surface === 'path') {
-      paintPathTexture(ctx, r.x, r.y, r.w, r.h, seed, r.w >= r.h);
-    } else {
-      paintRockTexture(ctx, r.x, r.y, r.w, r.h, seed);
-    }
+    ctx.fillRect(r.x + 2, r.y + 2, Math.max(2, r.w - 4), Math.max(2, r.h - 4));
   }
+  ctx.globalCompositeOperation = 'source-atop';
+  paintSandTexture(ctx, 204, 204, 1272, 876, 37);
+  ctx.restore();
 
-  // 2. Bordes vivos entre superficies distintas.
-  for (const r of ISLA_NATAL_WALK_RECTS) paintSurfaceFringe(ctx, r);
+  // 2. Pradera orgánica unificada (3 texturas) + integración curva con las playas
+  paintUnifiedIslandMeadow(ctx);
+  paintCurvedMeadowBeachFringe(ctx);
 
-  // 3. Caras de roca de la meseta, que caen sobre la pradera o el mar.
-  for (const r of ISLA_NATAL_WALK_RECTS) {
-    if (r.surface === 'rock') paintRockCliffs(ctx, r);
-  }
+  // 3. Promontorio y terrazas curvas del Alto de las Rocas + acantilados estratificados
+  paintOrganicRockHeadland(ctx);
+
+  // 4. Red coherente de caminos empedrados según cada trayecto (intacta)
+  paintIslandPaths(ctx);
 
   ctx.restore();
 
-  // 4. Costa, bajío y orla húmeda (por encima de las texturas).
+  // 5. Esculpido costero final, orla húmeda de marea y bajío turquesa asimétrico
   paintCoastBand(ctx, field);
 
-  // 5. Luz de la isla: el sol bajo del oeste besa la costa y el sureste queda
-  // en penumbra azulada. Unifica césped, arena, sendero y roca.
+  // 6. Luz de la isla dentro de la masa terrestre y su bajío (sin teñir el mar abierto)
   const worldW = canvas.width;
   const worldH = canvas.height;
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-atop';
   const worldLight = ctx.createLinearGradient(0, 0, worldW, worldH);
   worldLight.addColorStop(0, 'rgba(255, 222, 156, 0.13)');
   worldLight.addColorStop(0.34, 'rgba(255, 236, 190, 0.045)');
@@ -1157,8 +2330,7 @@ function paintGroundLayer(field: NatalCoastField): HTMLCanvasElement {
   ctx.fillStyle = worldLight;
   ctx.fillRect(0, 0, worldW, worldH);
 
-  // 6. Grandes sombras de nube y calvas de sol: profundidad atmosférica que
-  // rompe la uniformidad de la pradera sin tocar la geometría del mapa.
+  // 7. Grandes sombras de nube y calvas de sol sobre el relieve insular
   for (let i = 0; i < 9; i += 1) {
     const th = hash2(i * 91 + 7, i * 37 + 19);
     const cx = (th * 0.9 + 0.05) * worldW;
@@ -1168,16 +2340,26 @@ function paintGroundLayer(field: NatalCoastField): HTMLCanvasElement {
     paintGroundHalo(ctx, cx, cy, rx, ry, '22, 52, 46', 0.05);
     paintGroundHalo(ctx, cx + rx * 0.5, cy + ry * 0.6, rx * 0.6, ry * 0.6, '12, 38, 34', 0.035);
   }
+  ctx.restore();
 
   return canvas;
 }
 
 function ensureCoastLayer(): HTMLCanvasElement | null {
-  if (coastGroundLayer) return coastGroundLayer;
   if (typeof document === 'undefined') return null;
-  coastField = buildCoastField();
-  coastFoam = buildFoamPoints(coastField);
+  const tileMask =
+    ensureNatalGrassTiles().mask |
+    (ensureNatalPathTiles().mask << 3) |
+    (ensureNatalSandTiles().mask << 8);
+  if (coastGroundLayer && coastLayerTileMask === tileMask) {
+    return coastGroundLayer;
+  }
+  if (!coastField) {
+    coastField = buildCoastField();
+    coastFoam = buildFoamPoints(coastField);
+  }
   coastGroundLayer = paintGroundLayer(coastField);
+  coastLayerTileMask = tileMask;
   return coastGroundLayer;
 }
 
@@ -1592,27 +2774,41 @@ function drawFlower(ctx: CanvasRenderingContext2D, x: number, y: number, seed: n
 
 function drawPebble(ctx: CanvasRenderingContext2D, x: number, y: number, seed: number): void {
   const s = 2 + Math.floor(seed * 3);
-  ctx.fillStyle = 'rgba(60, 50, 36, 0.28)';
-  ctx.fillRect(x, y + 1, s + 1, 1);
-  ctx.fillStyle = seed > 0.5 ? '#b9ae97' : '#9a9080';
+  const onSand = !isPointOnNatalMeadow(x, y) && !(x < 590 && y < 544);
+  if (onSand) {
+    // Cuenco de arena hundida y reborde cálido semienterrado
+    ctx.fillStyle = 'rgba(104, 72, 36, 0.36)';
+    ctx.fillRect(x, y + 1, s + 2, 2);
+    ctx.fillStyle = 'rgba(234, 204, 152, 0.55)';
+    ctx.fillRect(x - 1, y + 1, s + 2, 1);
+  } else {
+    ctx.fillStyle = 'rgba(60, 50, 36, 0.28)';
+    ctx.fillRect(x, y + 1, s + 1, 1);
+  }
+  ctx.fillStyle = seed > 0.5 ? '#c2b398' : '#a49680';
   ctx.fillRect(x, y, s, s - 1);
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillStyle = 'rgba(255, 246, 224, 0.48)';
   ctx.fillRect(x, y, Math.max(1, s - 1), 1);
-  ctx.fillStyle = 'rgba(80, 70, 54, 0.5)';
+  ctx.fillStyle = 'rgba(84, 68, 48, 0.52)';
   ctx.fillRect(x + s - 1, y, 1, s - 1);
 }
 
 function drawShell(ctx: CanvasRenderingContext2D, x: number, y: number, seed: number): void {
-  ctx.fillStyle = 'rgba(90, 70, 40, 0.25)';
-  ctx.fillRect(x, y + 2, 5, 1);
-  ctx.fillStyle = seed > 0.5 ? '#fbcfe8' : '#fde9d3';
+  // Pequeña depresión cálida y granos de arena apoyados sobre el borde de la concha
+  ctx.fillStyle = 'rgba(108, 76, 38, 0.38)';
+  ctx.fillRect(x, y + 2, 5, 2);
+  ctx.fillStyle = 'rgba(238, 210, 160, 0.58)';
+  ctx.fillRect(x - 1, y + 2, 2, 1);
+  ctx.fillStyle = seed > 0.5 ? '#f8cde4' : '#fbe4c8';
   ctx.fillRect(x, y, 4, 3);
   ctx.fillRect(x + 1, y - 1, 2, 1);
-  ctx.fillStyle = 'rgba(190, 130, 150, 0.7)';
+  ctx.fillStyle = 'rgba(182, 118, 138, 0.72)';
   ctx.fillRect(x + 1, y, 1, 3);
   ctx.fillRect(x + 3, y + 1, 1, 2);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+  ctx.fillStyle = 'rgba(255, 250, 238, 0.75)';
   ctx.fillRect(x, y, 2, 1);
+  ctx.fillStyle = 'rgba(206, 168, 114, 0.52)';
+  ctx.fillRect(x + 3, y + 2, 2, 1);
 }
 
 function drawBush(
@@ -1799,6 +2995,117 @@ function drawAmbientLife(
 }
 
 
+interface NatalPalmBakedSet {
+  sunlit: [HTMLCanvasElement, HTMLCanvasElement];
+  woodland: [HTMLCanvasElement, HTMLCanvasElement];
+}
+
+let natalPalmSprite1: HTMLImageElement | null = null;
+let natalPalmSprite2: HTMLImageElement | null = null;
+let natalPalmBaked1: NatalPalmBakedSet | null = null;
+let natalPalmBaked2: NatalPalmBakedSet | null = null;
+
+function bakeIntegratedPalmCanvas(
+  img: HTMLImageElement,
+  outW: number,
+  outH: number,
+  flipX: boolean,
+  woodlandShade: boolean
+): HTMLCanvasElement | null {
+  if (typeof document === 'undefined' || !img.complete || img.naturalWidth <= 0) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const bctx = canvas.getContext('2d');
+  if (!bctx) return null;
+
+  bctx.save();
+  bctx.imageSmoothingEnabled = true;
+  bctx.imageSmoothingQuality = 'high';
+  if (flipX) {
+    bctx.translate(outW, 0);
+    bctx.scale(-1, 1);
+  }
+  bctx.drawImage(img, 0, 0, outW, outH);
+  bctx.restore();
+
+  // Baño lumínico de Hora Dorada: sol cálido desde el oeste y penumbra esmeralda al este
+  bctx.globalCompositeOperation = 'source-atop';
+  const sunGrad = bctx.createLinearGradient(0, outH * 0.08, outW, outH * 0.92);
+  if (woodlandShade) {
+    sunGrad.addColorStop(0, 'rgba(255, 214, 134, 0.14)');
+    sunGrad.addColorStop(0.45, 'rgba(64, 128, 42, 0.08)');
+    sunGrad.addColorStop(1, 'rgba(12, 42, 24, 0.28)');
+  } else {
+    sunGrad.addColorStop(0, 'rgba(255, 224, 146, 0.21)');
+    sunGrad.addColorStop(0.48, 'rgba(128, 186, 62, 0.06)');
+    sunGrad.addColorStop(1, 'rgba(16, 48, 26, 0.22)');
+  }
+  bctx.fillStyle = sunGrad;
+  bctx.fillRect(0, 0, outW, outH);
+
+  // Luz cálida rebotada desde la arena/pradera en el envés bajo de la copa y oclusión en la raíz
+  const baseGrad = bctx.createLinearGradient(0, outH * 0.82, 0, outH);
+  baseGrad.addColorStop(0, 'rgba(22, 42, 20, 0)');
+  baseGrad.addColorStop(1, 'rgba(18, 36, 16, 0.34)');
+  bctx.fillStyle = baseGrad;
+  bctx.fillRect(0, outH * 0.82, outW, outH * 0.18);
+  bctx.globalCompositeOperation = 'source-over';
+
+  // Limpieza suave de bordes sin escalones blancos: preserva puntas finas de palma y oscurece semitransparencias
+  const imgData = bctx.getImageData(0, 0, outW, outH);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a < 22) {
+      d[i + 3] = 0;
+      continue;
+    }
+    if (a < 215) {
+      const k = 0.84 + (a / 215) * 0.16;
+      d[i] = Math.round(d[i] * k * 0.94);
+      d[i + 1] = Math.round(d[i + 1] * k);
+      d[i + 2] = Math.round(d[i + 2] * k * 0.88);
+      d[i + 3] = Math.min(255, Math.round(Math.pow(a / 255, 0.92) * 255));
+    }
+  }
+  bctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+function ensureNatalPalmSprites(): [NatalPalmBakedSet | null, NatalPalmBakedSet | null] {
+  if (typeof Image === 'undefined') return [null, null];
+  if (!natalPalmSprite1) {
+    natalPalmSprite1 = new Image();
+    natalPalmSprite1.decoding = 'async';
+    natalPalmSprite1.src = '/assets/pixelverse/natal-palm-1.png';
+  }
+  if (!natalPalmSprite2) {
+    natalPalmSprite2 = new Image();
+    natalPalmSprite2.decoding = 'async';
+    natalPalmSprite2.src = '/assets/pixelverse/natal-palm-2.png';
+  }
+  if (!natalPalmBaked1 && natalPalmSprite1.complete && natalPalmSprite1.naturalWidth > 0) {
+    const s0 = bakeIntegratedPalmCanvas(natalPalmSprite1, 184, 188, false, false);
+    const s1 = bakeIntegratedPalmCanvas(natalPalmSprite1, 184, 188, true, false);
+    const w0 = bakeIntegratedPalmCanvas(natalPalmSprite1, 184, 188, false, true);
+    const w1 = bakeIntegratedPalmCanvas(natalPalmSprite1, 184, 188, true, true);
+    if (s0 && s1 && w0 && w1) {
+      natalPalmBaked1 = { sunlit: [s0, s1], woodland: [w0, w1] };
+    }
+  }
+  if (!natalPalmBaked2 && natalPalmSprite2.complete && natalPalmSprite2.naturalWidth > 0) {
+    const s0 = bakeIntegratedPalmCanvas(natalPalmSprite2, 164, 212, false, false);
+    const s1 = bakeIntegratedPalmCanvas(natalPalmSprite2, 164, 212, true, false);
+    const w0 = bakeIntegratedPalmCanvas(natalPalmSprite2, 164, 212, false, true);
+    const w1 = bakeIntegratedPalmCanvas(natalPalmSprite2, 164, 212, true, true);
+    if (s0 && s1 && w0 && w1) {
+      natalPalmBaked2 = { sunlit: [s0, s1], woodland: [w0, w1] };
+    }
+  }
+  return [natalPalmBaked1, natalPalmBaked2];
+}
+
 function drawPalm(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1807,183 +3114,150 @@ function drawPalm(
   elapsed: number,
   reducedMotion: boolean
 ): void {
-  const sway = reducedMotion ? 0 : Math.sin(elapsed * 1.08 + seed * 9) * 2.6;
-  const h = 48 + Math.floor(seed * 20);
   const baseX = Math.round(x);
   const baseY = Math.round(y);
+  const [palmSingleSet, palmTwinSet] = ensureNatalPalmSprites();
+  const useTwinVariant = seed >= 0.48;
+  const set = useTwinVariant ? palmTwinSet : palmSingleSet;
+  const flipped = hash2(baseX + 31, baseY - 19) > 0.5;
 
-  // Sombra alargada hacia el este (sol bajo al oeste) y sombra de contacto.
-  ctx.fillStyle = 'rgba(20, 50, 30, 0.18)';
+  const land = isIslaNatalPointOnLand(baseX, baseY);
+  const onMeadow = isPointOnNatalMeadow(baseX, baseY);
+  const onSand = !onMeadow && land?.surface !== 'path';
+  const nearBeach = onSand || !isPointOnNatalMeadow(baseX, baseY + 20);
+  const onPath = land?.surface === 'path';
+  const inArboleda = land?.zone === 'arboleda-arcade' || baseX > 1080;
+
+  const pair = set ? (inArboleda ? set.woodland : set.sunlit) : null;
+  const sprite = pair ? pair[flipped ? 1 : 0] : null;
+
+  const scale = 0.90 + seed * 0.16;
+  const drawW = Math.round((useTwinVariant ? 80 : 90) * scale);
+  const drawH = Math.round((useTwinVariant ? 104 : 92) * scale);
+  const naturalLean = (hash2(baseX - 13, baseY + 29) - 0.46) * 0.055;
+  const breeze = reducedMotion
+    ? 0
+    : Math.sin(elapsed * 1.06 + seed * 9 + baseX * 0.018) * 0.02 +
+      Math.sin(elapsed * 2.15 + seed * 15) * 0.005;
+  const totalShear = naturalLean + breeze;
+  const shadowShift = Math.round(-totalShear * 52);
+
+  ctx.save();
+  ctx.translate(baseX, baseY);
+
+  // 1. Sombra proyectada de tronco + abanico de hojas hacia el este-sureste (hora dorada)
+  const shadowColor = onSand
+    ? 'rgba(88, 62, 28, 0.20)'
+    : onPath
+      ? 'rgba(54, 36, 18, 0.21)'
+      : 'rgba(12, 36, 18, 0.21)';
+  ctx.fillStyle = shadowColor;
+  // Sombra alargada del tronco en el suelo
   ctx.beginPath();
-  ctx.ellipse(x + 22, y + 4, 29, 8, 0, 0, Math.PI * 2);
+  ctx.moveTo(-3, 2);
+  ctx.lineTo(3, 0);
+  ctx.lineTo(24 + shadowShift, 5);
+  ctx.lineTo(18 + shadowShift, 8);
+  ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = 'rgba(16, 42, 26, 0.34)';
+
+  // Silueta lobulada de las palmas proyectada sobre el césped/arena
+  const crownShadowX = 27 + shadowShift;
+  const crownShadowY = 6;
+  const frondAngles = [-2.5, -1.55, -0.65, 0.25, 1.15, 2.15];
+  for (let fi = 0; fi < frondAngles.length; fi++) {
+    const ang = frondAngles[fi] + seed * 0.8 + breeze * 2.4;
+    const fx = crownShadowX + Math.cos(ang) * (drawW * 0.16);
+    const fy = crownShadowY + Math.sin(ang) * 5.2;
+    ctx.beginPath();
+    ctx.ellipse(fx, fy, drawW * 0.17, 4.2, ang * 0.32, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 2. Lecho de raíces y oclusión ambiental de contacto con la isla
+  ctx.fillStyle = onSand
+    ? 'rgba(84, 58, 26, 0.30)'
+    : onPath
+      ? 'rgba(58, 38, 18, 0.32)'
+      : 'rgba(14, 38, 16, 0.34)';
   ctx.beginPath();
-  ctx.ellipse(x + 3, y + 2, 13, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 3, useTwinVariant ? 18 : 11, 4.8, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Base de pradera, hojarasca y piedra al pie del tronco.
-  ctx.fillStyle = '#3d7c3c';
-  ctx.fillRect(baseX - 8, baseY - 3, 16, 3);
-  ctx.fillStyle = '#79c96a';
-  ctx.fillRect(baseX - 6, baseY - 6, 2, 4);
-  ctx.fillRect(baseX + 4, baseY - 5, 2, 3);
-  ctx.fillStyle = '#8d8779';
-  ctx.fillRect(baseX - 10, baseY - 2, 5, 2);
-  ctx.fillStyle = 'rgba(255, 244, 220, 0.3)';
-  ctx.fillRect(baseX - 10, baseY - 2, 2, 1);
-  ctx.fillStyle = 'rgba(74, 48, 26, 0.5)';
-  ctx.fillRect(baseX - 5, baseY - 1, 11, 2);
+  if (!onSand && !onPath) {
+    // Pequeño mantillo húmedo y trébol bajo la base para fundirse con el césped
+    ctx.fillStyle = 'rgba(48, 34, 20, 0.32)';
+    ctx.beginPath();
+    ctx.ellipse(0, 3, useTwinVariant ? 13 : 8, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  // Tronco curvado por segmentos: corteza, anillos y brillo izquierdo.
-  for (let i = 0; i < h; i += 3) {
-    const t = i / h;
-    const tx = Math.round(baseX + t * t * 11 + sway * t * 0.75);
-    const ty = baseY - i;
-    const wide = i < 6 ? 7 : i > h * 0.68 ? 4 : 5;
-    ctx.fillStyle = '#4a2f1b';
-    ctx.fillRect(tx - 3, ty - 3, wide + 2, 4);
-    ctx.fillStyle = i % 9 === 0 ? '#6e4a29' : '#7d5530';
-    ctx.fillRect(tx - 2, ty - 3, wide, 4);
-    ctx.fillStyle = '#a67c48';
-    ctx.fillRect(tx - 2, ty - 3, 1, 4);
-    ctx.fillStyle = 'rgba(48, 28, 14, 0.55)';
-    ctx.fillRect(tx + wide - 2, ty - 3, 1, 4);
-    if (i % 9 === 0) {
-      ctx.fillStyle = 'rgba(58, 36, 20, 0.6)';
-      ctx.fillRect(tx - 2, ty - 1, wide, 1);
-      ctx.fillStyle = 'rgba(196, 150, 96, 0.4)';
-      ctx.fillRect(tx - 1, ty - 2, wide - 2, 1);
+  // 3. Dibujo de la palmera con suavizado de alta calidad para conservar el detalle de las hojas
+  if (sprite) {
+    ctx.save();
+    ctx.translate(0, 4);
+    ctx.transform(1, 0, totalShear, 1, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(sprite, -drawW * 0.5, -drawH * 0.965, drawW, drawH);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#6e4a29';
+    ctx.fillRect(-3, -52, 6, 54);
+    ctx.fillStyle = '#2e7226';
+    ctx.beginPath();
+    ctx.ellipse(0, -54, 24, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 4. Integración frontal al pie según el terreno real (arena costera, sendero o pradera)
+  if (nearBeach) {
+    // Pequeño montículo de arena removida y rizada abrazando la raíz de la palmera
+    ctx.fillStyle = 'rgba(186, 148, 96, 0.58)';
+    ctx.beginPath();
+    ctx.ellipse(0, 4, useTwinVariant ? 17 : 11, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(222, 188, 134, 0.72)';
+    ctx.fillRect(-10, 3, 8, 2);
+    ctx.fillRect(3, 3, 8, 2);
+    ctx.fillStyle = 'rgba(246, 224, 178, 0.55)';
+    ctx.fillRect(-8, 2, 5, 1);
+    ctx.fillRect(4, 3, 4, 1);
+  }
+  if (onPath) {
+    ctx.fillStyle = 'rgba(166, 130, 82, 0.62)';
+    ctx.fillRect(-10, 3, 8, 2);
+    ctx.fillRect(3, 3, 8, 2);
+  }
+  if (!onSand) {
+    const sway = reducedMotion ? 0 : Math.round(Math.sin(elapsed * 1.45 + seed * 6) * 0.7);
+    const offsets = useTwinVariant ? [-15, -9, -3, 3, 9, 15] : [-8, -4, 0, 4, 8];
+    for (let i = 0; i < offsets.length; i++) {
+      const gx = offsets[i] + Math.round((hash2(baseX + i * 7, baseY - i * 5) - 0.5) * 2);
+      const gh = 3 + ((i + Math.floor(seed * 10)) % 3);
+      ctx.fillStyle = i % 2 === 0 ? '#24571c' : '#387624';
+      ctx.fillRect(gx - 1, 5 - gh, 2, gh);
+      ctx.fillStyle = i % 3 === 0 ? '#8ad04e' : '#64ab35';
+      ctx.fillRect(gx + sway, 4 - gh, 1, gh - 1);
     }
   }
 
-  // Vainas secas colgando bajo la corona.
-  ctx.fillStyle = '#6b4a2a';
-  ctx.fillRect(baseX + 7, baseY - h + 2, 3, 8);
-  ctx.fillStyle = '#8a6238';
-  ctx.fillRect(baseX + 8, baseY - h + 3, 1, 6);
-  ctx.fillStyle = '#5a3c22';
-  ctx.fillRect(baseX + 12, baseY - h + 1, 2, 6);
-
-  const crownX = baseX + 11 + Math.round(sway * 0.9);
-  const crownY = baseY - h;
-
-  const fronds = 12;
-  const specs: { ang: number; len: number; droop: number }[] = [];
-  for (let i = 0; i < fronds; i++) {
-    const ang = (i / fronds) * Math.PI * 2 + 0.28 + seed * 1.6;
-    specs.push({
-      ang,
-      len: 20 + Math.floor(hash2(i + 3, Math.round(seed * 90)) * 10),
-      droop: 4 + hash2(i - 7, Math.round(seed * 40)) * 8,
-    });
-  }
-  specs.sort((a, b) => Math.sin(a.ang) - Math.sin(b.ang));
-
-  const paintFrond = (
-    ang: number,
-    len: number,
-    droop: number,
-    shade: string,
-    mid: string,
-    light: string,
-    offsetY: number
-  ) => {
-    const dirX = Math.cos(ang);
-    const dirY = Math.sin(ang) * 0.55;
-    const perpX = -Math.sin(ang);
-    const perpY = Math.cos(ang) * 0.6;
-    for (let s = 2; s <= len; s++) {
-      const t = s / len;
-      const wob = reducedMotion ? 0 : Math.sin(elapsed * 1.7 + s * 0.4 + seed * 5) * 1.1 * t;
-      const px = Math.round(crownX + dirX * s + sway * t * 1.4 + wob);
-      const py = Math.round(crownY + dirY * s + droop * t * t * 1.5 + offsetY);
-      ctx.fillStyle = shade;
-      ctx.fillRect(px - 1, py, 2, 2);
-      if (s % 2 === 0) {
-        const leaf = Math.min(5, 1 + Math.round((1 - t) * 4));
-        const lx = Math.round(perpX * leaf);
-        const ly = Math.round(perpY * leaf);
-        ctx.fillStyle = mid;
-        // Folíolos de 2 px: la palma gana cuerpo sin perder el filo pixel-art.
-        ctx.fillRect(px + lx - 1, py + ly, 2, 1);
-        ctx.fillRect(px - lx - 1, py - ly, 2, 1);
-        ctx.fillRect(px + Math.round(lx * 0.55), py + Math.round(ly * 0.55), 1, 1);
-        if (s % 4 === 0) {
-          ctx.fillStyle = light;
-          ctx.fillRect(px + lx, py + ly - 1, 1, 1);
-          ctx.fillRect(px - lx, py - ly, 1, 1);
-        }
-      }
+  // Coco caído ocasional al pie para dar vida natural a la isla
+  if (seed > 0.36) {
+    const cx = useTwinVariant ? (flipped ? -13 : 12) : flipped ? -8 : 7;
+    ctx.fillStyle = onSand ? 'rgba(96, 66, 32, 0.42)' : 'rgba(20, 36, 18, 0.35)';
+    ctx.fillRect(cx, 5, 5, 2);
+    ctx.fillStyle = '#6e431f';
+    ctx.fillRect(cx, 3, 4, 3);
+    ctx.fillStyle = '#b67837';
+    ctx.fillRect(cx, 3, 2, 2);
+    if (onSand) {
+      ctx.fillStyle = 'rgba(226, 194, 142, 0.62)';
+      ctx.fillRect(cx - 1, 5, 3, 1);
     }
-    ctx.fillStyle = light;
-    const tipX = Math.round(crownX + dirX * (len + 1) + sway * 1.4);
-    const tipY = Math.round(crownY + dirY * (len + 1) + droop * 1.5 + offsetY);
-    ctx.fillRect(tipX, tipY, 1, 1);
-  };
-
-  // Capa de sombra de la copa.
-  for (let i = 0; i < specs.length; i++) {
-    const f = specs[i];
-    paintFrond(f.ang, f.len, f.droop, '#1c4b27', '#245f2e', '#245f2e', 2);
-  }
-  // Capa iluminada, con dos verdes alternados.
-  for (let i = 0; i < specs.length; i++) {
-    const f = specs[i];
-    const even = i % 2 === 0;
-    paintFrond(
-      f.ang,
-      f.len,
-      f.droop,
-      even ? '#2f7d3a' : '#286f34',
-      even ? '#3f9c4a' : '#379044',
-      '#a8e08c',
-      0
-    );
   }
 
-  // Luz de borde del oeste sobre las frondas superiores.
-  ctx.fillStyle = 'rgba(190, 228, 140, 0.55)';
-  ctx.fillRect(crownX - 9, crownY - 6, 3, 1);
-  ctx.fillRect(crownX - 12, crownY - 2, 2, 1);
-  ctx.fillRect(crownX - 4, crownY - 10, 2, 1);
-  ctx.fillStyle = 'rgba(236, 250, 190, 0.4)';
-  ctx.fillRect(crownX - 10, crownY - 7, 1, 1);
-
-  // Corona fibrosa y brote central.
-  ctx.fillStyle = '#6b4a2a';
-  ctx.fillRect(crownX - 3, crownY + 1, 7, 4);
-  ctx.fillStyle = '#8a6238';
-  ctx.fillRect(crownX - 2, crownY, 5, 2);
-  ctx.fillStyle = '#6bbf5c';
-  ctx.fillRect(crownX - 2, crownY - 1, 5, 3);
-  ctx.fillStyle = '#a8e08c';
-  ctx.fillRect(crownX - 1, crownY - 2, 3, 2);
-
-  // Racimo de cocos con brillo.
-  const coconuts: [number, number][] = [
-    [-4, 4],
-    [2, 5],
-    [-1, 7],
-  ];
-  for (let i = 0; i < coconuts.length; i++) {
-    const [ox, oy] = coconuts[i];
-    ctx.fillStyle = '#5e3d22';
-    ctx.fillRect(crownX + ox - 1, crownY + oy - 1, 4, 4);
-    ctx.fillStyle = '#8a5a2b';
-    ctx.fillRect(crownX + ox, crownY + oy, 3, 3);
-    ctx.fillStyle = 'rgba(255, 214, 150, 0.4)';
-    ctx.fillRect(crownX + ox, crownY + oy, 1, 1);
-  }
-
-  // Destellos cálidos del sol bajo en las frondas del oeste.
-  if (!reducedMotion) {
-    const glint = 0.24 + (Math.sin(elapsed * 1.35 + seed * 5.3) * 0.5 + 0.5) * 0.34;
-    ctx.fillStyle = `rgba(255, 238, 176, ${glint.toFixed(3)})`;
-    ctx.fillRect(crownX - 14, crownY + 1, 1, 1);
-    ctx.fillRect(crownX - 9, crownY - 3, 1, 1);
-    ctx.fillRect(crownX - 18, crownY + 5, 1, 1);
-  }
+  ctx.restore();
 }
 
 function drawBoulder(
@@ -1996,9 +3270,10 @@ function drawBoulder(
   const h = 11 + Math.floor(seed * 10);
   const left = Math.round(x - w / 2);
   const top = Math.round(y - h);
+  const onSand = !isPointOnNatalMeadow(x, y) && !(x < 590 && y < 544);
 
-  // Sombra de contacto y sombra proyectada al este.
-  ctx.fillStyle = 'rgba(24, 40, 26, 0.28)';
+  // Sombra de contacto adaptada al terreno (ocre cálida sobre arena, verde húmeda sobre hierba)
+  ctx.fillStyle = onSand ? 'rgba(92, 64, 30, 0.32)' : 'rgba(24, 40, 26, 0.28)';
   ctx.beginPath();
   ctx.ellipse(x + 4, y + 2, w * 0.62, 4.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -2044,11 +3319,18 @@ function drawBoulder(
     ctx.fillRect(left + Math.round(w * 0.52), top + 1, 2, 1);
   }
 
-  // Pedruscos al pie.
+  // Pedruscos y arena acumulada al pie.
   ctx.fillStyle = '#6f6a5e';
   ctx.fillRect(left + Math.round(w * 0.08), y - 1, 3, 2);
   ctx.fillStyle = 'rgba(255, 244, 220, 0.35)';
   ctx.fillRect(left + Math.round(w * 0.08), y - 1, 2, 1);
+  if (onSand) {
+    ctx.fillStyle = 'rgba(218, 184, 130, 0.72)';
+    ctx.fillRect(left + 2, y - 1, Math.round(w * 0.42), 2);
+    ctx.fillRect(left + Math.round(w * 0.56), y, Math.round(w * 0.32), 2);
+    ctx.fillStyle = 'rgba(244, 220, 174, 0.50)';
+    ctx.fillRect(left + 3, y - 1, Math.round(w * 0.28), 1);
+  }
 }
 
 /** Grandes peñascos que dan cuerpo a los bloqueos de la meseta y de la costa. */
@@ -2062,8 +3344,9 @@ function drawRockOutcrop(
 ): void {
   const left = Math.round(x);
   const top = Math.round(y);
+  const onSand = !isPointOnNatalMeadow(left + w * 0.5, top + h) && !(left < 590 && top < 544);
 
-  ctx.fillStyle = 'rgba(24, 40, 26, 0.26)';
+  ctx.fillStyle = onSand ? 'rgba(92, 64, 30, 0.30)' : 'rgba(24, 40, 26, 0.26)';
   ctx.beginPath();
   ctx.ellipse(left + w * 0.55, top + h + 2, w * 0.55, 6, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -2117,12 +3400,19 @@ function drawRockOutcrop(
   ctx.fillRect(left + w * 0.62, top + h * 0.18, 2, 1);
   ctx.fillRect(left + w * 0.7, top + h * 0.28, 1, 1);
 
-  // Esquirlas al pie.
+  // Esquirlas y duna adherida al pie en peñascos playeros.
   ctx.fillStyle = '#8d8779';
   ctx.fillRect(left + 3, top + h - 1, 4, 2);
   ctx.fillRect(left + w - 8, top + h - 2, 3, 2);
   ctx.fillStyle = 'rgba(255, 244, 220, 0.32)';
   ctx.fillRect(left + 3, top + h - 1, 3, 1);
+  if (onSand) {
+    ctx.fillStyle = 'rgba(216, 182, 128, 0.74)';
+    ctx.fillRect(left + 4, top + h - 2, Math.round(w * 0.46), 3);
+    ctx.fillRect(left + Math.round(w * 0.54), top + h - 1, Math.round(w * 0.36), 2);
+    ctx.fillStyle = 'rgba(244, 220, 174, 0.52)';
+    ctx.fillRect(left + 6, top + h - 2, Math.round(w * 0.30), 1);
+  }
 }
 
 /** Tronco caído del claro: corteza, anillos y musgo húmedo. */
@@ -2546,15 +3836,13 @@ function drawHut(ctx: CanvasRenderingContext2D, elapsed: number, reducedMotion: 
   ctx.fillStyle = '#a78bd0';
   ctx.fillRect(benchX + 20, benchY - 13, 3, 2);
   ctx.fillRect(benchX + 24, benchY - 13, 3, 2);
-  // Piedras del sendero que salen de la puerta hacia el este.
-  for (let i = 0; i < 3; i++) {
-    ctx.fillStyle = 'rgba(40, 28, 16, 0.3)';
-    ctx.fillRect(doorX + 20 + i * 16, y + h + 6 + i * 3, 12, 4);
-    ctx.fillStyle = i % 2 === 0 ? '#a9a190' : '#bdb5a2';
-    ctx.fillRect(doorX + 19 + i * 16, y + h + 5 + i * 3, 11, 3);
-    ctx.fillStyle = 'rgba(255, 250, 236, 0.35)';
-    ctx.fillRect(doorX + 19 + i * 16, y + h + 5 + i * 3, 9, 1);
-  }
+  // Solera de umbral de piedra al pie de la puerta, enlazada con la plaza de entrada.
+  ctx.fillStyle = 'rgba(34, 24, 14, 0.34)';
+  ctx.fillRect(doorX - 2, y + h, 28, 4);
+  ctx.fillStyle = '#c49d6c';
+  ctx.fillRect(doorX - 1, y + h, 26, 3);
+  ctx.fillStyle = 'rgba(255, 242, 214, 0.45)';
+  ctx.fillRect(doorX, y + h, 24, 1);
   // Charco de luz cálida que la ventana proyecta en la hierba.
   if (!reducedMotion) {
     ctx.save();
@@ -2855,15 +4143,28 @@ function drawCabinet(
 }
 
 function drawSign(ctx: CanvasRenderingContext2D): void {
-  // Mismo cartel pequeño del Origen; el texto se lee pulsando [E].
+  // Montículo de arena compactada abrazando el poste del cartel playero
+  ctx.fillStyle = 'rgba(104, 72, 36, 0.32)';
+  ctx.beginPath();
+  ctx.ellipse(SIGN_POS.x + 2, SIGN_POS.y + 1, 10, 3.2, 0, 0, Math.PI * 2);
+  ctx.fill();
   drawGbcWoodenSign(ctx, SIGN_POS.x, SIGN_POS.y);
+  ctx.fillStyle = 'rgba(220, 186, 132, 0.76)';
+  ctx.fillRect(SIGN_POS.x - 5, SIGN_POS.y - 1, 10, 2);
+  ctx.fillStyle = 'rgba(246, 222, 176, 0.52)';
+  ctx.fillRect(SIGN_POS.x - 4, SIGN_POS.y - 1, 5, 1);
 }
 
 function drawNet(ctx: CanvasRenderingContext2D, elapsed: number): void {
   const { x, y } = NET_POS;
-  ctx.fillStyle = 'rgba(120, 96, 60, 0.55)';
-  ctx.fillRect(x - 22, y - 8, 44, 16);
-  ctx.strokeStyle = '#9fb6a8';
+  // Depresión húmeda en la arena donde descansa la red tendida al sol
+  ctx.fillStyle = 'rgba(116, 82, 42, 0.36)';
+  ctx.beginPath();
+  ctx.ellipse(x + 1, y + 1, 25, 9.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(148, 110, 62, 0.38)';
+  ctx.fillRect(x - 21, y - 7, 42, 14);
+  ctx.strokeStyle = '#a8bdb0';
   ctx.lineWidth = 1;
   for (let i = -20; i <= 20; i += 5) {
     ctx.beginPath();
@@ -2884,24 +4185,48 @@ function drawNet(ctx: CanvasRenderingContext2D, elapsed: number): void {
   ctx.lineTo(x + 16, y + 2);
   ctx.lineTo(x + 9, y + 6);
   ctx.stroke();
-  // Flotadores
+  // Flotadores de corcho naranja con sombra en la arena
+  ctx.fillStyle = 'rgba(92, 64, 30, 0.42)';
+  ctx.fillRect(x - 20, y - 8, 4, 2);
+  ctx.fillRect(x + 18, y - 8, 4, 2);
   ctx.fillStyle = '#f97316';
   ctx.fillRect(x - 20, y - 10, 3, 3);
   ctx.fillRect(x + 18, y - 10, 3, 3);
+  // Lenguas finas de arena sobre los bordes inferiores de la red
+  ctx.fillStyle = 'rgba(222, 188, 134, 0.68)';
+  ctx.fillRect(x - 19, y + 6, 8, 2);
+  ctx.fillRect(x + 6, y + 7, 9, 2);
+  ctx.fillStyle = 'rgba(246, 222, 176, 0.48)';
+  ctx.fillRect(x - 17, y + 6, 5, 1);
 }
 
 function drawShellCluster(ctx: CanvasRenderingContext2D, elapsed: number): void {
   const { x, y } = SHELLS_POI_POS;
+  // Pequeña hondonada de arena removida alrededor de las caracolas
+  ctx.fillStyle = 'rgba(116, 82, 42, 0.30)';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 1, 16, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
   for (let i = 0; i < 3; i++) {
-    ctx.fillStyle = i % 2 === 0 ? '#fbcfe8' : '#fde9d3';
-    ctx.fillRect(x - 10 + i * 9, y - 2 + (i % 2), 5, 4);
-    ctx.fillStyle = 'rgba(190, 130, 150, 0.6)';
-    ctx.fillRect(x - 9 + i * 9, y - 2 + (i % 2), 1, 4);
+    const sx = x - 10 + i * 9;
+    const sy = y - 2 + (i % 2);
+    ctx.fillStyle = 'rgba(96, 66, 32, 0.36)';
+    ctx.fillRect(sx, sy + 3, 6, 2);
+    ctx.fillStyle = i % 2 === 0 ? '#f8cde4' : '#fbe4c8';
+    ctx.fillRect(sx, sy, 5, 4);
+    ctx.fillStyle = 'rgba(182, 118, 138, 0.65)';
+    ctx.fillRect(sx + 1, sy, 1, 4);
+    ctx.fillStyle = 'rgba(224, 190, 136, 0.58)';
+    ctx.fillRect(sx - 1, sy + 3, 3, 1);
   }
-  // Cangrejo que recoloca y huye
+  // Cangrejo que recoloca y huye dejando leve rastro en la arena
   const scuttle = (Math.sin(elapsed * 0.9) + 1) / 2;
   const cx = x + 16 + scuttle * 14;
   const cy = y + 8 - scuttle * 3;
+  ctx.fillStyle = 'rgba(132, 94, 48, 0.28)';
+  ctx.fillRect(x + 15, y + 8, Math.max(2, Math.round(scuttle * 14)), 1);
+  ctx.fillStyle = 'rgba(92, 62, 28, 0.36)';
+  ctx.fillRect(cx - 3, cy + 2, 7, 1);
   ctx.fillStyle = '#f4763c';
   ctx.fillRect(cx - 3, cy - 2, 6, 4);
   ctx.fillRect(cx - 5, cy - 1, 2, 2);
@@ -3099,6 +4424,18 @@ function drawBeachBoardwalk(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = 'rgba(255, 226, 170, 0.28)';
     ctx.fillRect(x - 2, py, w + 4, 1);
   }
+
+  // Arena arrastrada por la brisa marina sobre los extremos y tablones inferiores de la pasarela
+  ctx.fillStyle = 'rgba(220, 186, 132, 0.72)';
+  ctx.fillRect(x - 5, y + h - 2, 14, 3);
+  ctx.fillRect(x + w - 11, y + h - 2, 16, 3);
+  ctx.fillRect(x + 18, y + h - 1, 12, 2);
+  ctx.fillStyle = 'rgba(244, 220, 174, 0.52)';
+  ctx.fillRect(x - 3, y + h - 2, 8, 1);
+  ctx.fillRect(x + w - 8, y + h - 2, 9, 1);
+  ctx.fillStyle = 'rgba(214, 180, 126, 0.45)';
+  ctx.fillRect(x + 4, y + 19, 9, 2);
+  ctx.fillRect(x + w - 15, y + 13, 8, 2);
 }
 
 function drawNorthPortDock(
@@ -3111,6 +4448,12 @@ function drawNorthPortDock(
   const left = Math.round(x - 26);
   const bottom = Math.round(y + 4);
   const top = Math.round(y - 56);
+
+  // Estribo costero: arena húmeda y sombra de apoyo donde el muelle nace en la orilla norte
+  ctx.fillStyle = 'rgba(104, 72, 36, 0.34)';
+  ctx.beginPath();
+  ctx.ellipse(x, bottom + 1, 31, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   // Sombra sobre el agua.
   ctx.fillStyle = 'rgba(4, 20, 30, 0.35)';
@@ -3153,6 +4496,14 @@ function drawNorthPortDock(
   ctx.fillStyle = '#9a6f45';
   ctx.fillRect(left + 1, top + 6, 4, 3);
   ctx.fillRect(left + 47, top + 6, 4, 3);
+
+  // Arena seca de la media luna del puerto abrazando el primer tablón sur del muelle
+  ctx.fillStyle = 'rgba(218, 184, 130, 0.66)';
+  ctx.fillRect(left - 2, bottom - 2, 11, 3);
+  ctx.fillRect(left + 43, bottom - 2, 11, 3);
+  ctx.fillStyle = 'rgba(244, 220, 174, 0.45)';
+  ctx.fillRect(left, bottom - 2, 6, 1);
+  ctx.fillRect(left + 45, bottom - 2, 6, 1);
 
   // Amarre y farolillo cian: señal de que el carril está disponible.
   ctx.fillStyle = '#2b2b33';
@@ -3319,7 +4670,8 @@ function drawPlayer(
     return;
   }
 
-  ctx.fillStyle = 'rgba(20, 44, 28, 0.34)';
+  const playerOnSand = !isPointOnNatalMeadow(p.x, p.y) && !(p.x < 590 && p.y < 544);
+  ctx.fillStyle = playerOnSand ? 'rgba(92, 64, 30, 0.34)' : 'rgba(20, 44, 28, 0.34)';
   ctx.beginPath();
   ctx.ellipse(p.x + 3, p.y + 3, 10, 4, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -4575,6 +5927,7 @@ function drawCabinFurniture(ctx: CanvasRenderingContext2D, elapsed: number, redu
 
 /** Guitarra eléctrica roja de la familia, colgada de un clavo sobre la cama. */
 function drawCabinGuitar(ctx: CanvasRenderingContext2D): void {
+  if (!ctx) return;
   const cx = 52;
   ctx.save();
 
@@ -4640,9 +5993,13 @@ function drawCabinGuitar(ctx: CanvasRenderingContext2D): void {
     [cx + 4, 86],
   ];
   const trace = (pts: [number, number][]) => {
+    if (!pts || pts.length === 0) return;
     ctx.beginPath();
     ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i];
+      if (p) ctx.lineTo(p[0], p[1]);
+    }
     ctx.closePath();
   };
   ctx.fillStyle = '#2a0a08';
@@ -4679,7 +6036,9 @@ function drawCabinGuitar(ctx: CanvasRenderingContext2D): void {
   ctx.fillRect(cx + 4, 96, 1, 18);
 
   // Pastillas dobles y puente cromado.
-  for (const py of [96, 106]) {
+  const pyList = [96, 106];
+  for (let pi = 0; pi < pyList.length; pi++) {
+    const py = pyList[pi];
     ctx.fillStyle = '#171310';
     ctx.fillRect(cx - 7, py, 12, 4);
     ctx.fillStyle = '#c9ced6';
@@ -5222,6 +6581,96 @@ export function renderIslaNatalCabin(params: IslaNatalCabinRenderParams): void {
 }
 
 /* ------------------------------------------------------------------ */
+/* SPRITES DE ÁRBOLES DE ISLA NATAL (INTEGRACIÓN AL TERRENO)          */
+/* ------------------------------------------------------------------ */
+
+let natalTreeSprite1: HTMLImageElement | null = null;
+let natalTreeSprite2: HTMLImageElement | null = null;
+let natalTreeBaked1: [HTMLCanvasElement, HTMLCanvasElement] | null = null;
+let natalTreeBaked2: [HTMLCanvasElement, HTMLCanvasElement] | null = null;
+
+function bakeIntegratedTreeCanvas(img: HTMLImageElement, flipX: boolean): HTMLCanvasElement | null {
+  if (typeof document === 'undefined' || !img.complete || img.naturalWidth <= 0) return null;
+  const size = 88;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const bctx = canvas.getContext('2d');
+  if (!bctx) return null;
+
+  bctx.save();
+  bctx.imageSmoothingEnabled = true;
+  bctx.imageSmoothingQuality = 'high';
+  if (flipX) {
+    bctx.translate(size, 0);
+    bctx.scale(-1, 1);
+  }
+  bctx.drawImage(img, 0, 0, size, size);
+  bctx.restore();
+
+  // Tinte direccional de hora dorada idéntico al del terreno (sol cálido siempre desde el oeste)
+  bctx.globalCompositeOperation = 'source-atop';
+  const sunGrad = bctx.createLinearGradient(0, 0, size, size);
+  sunGrad.addColorStop(0, 'rgba(255, 224, 152, 0.14)');
+  sunGrad.addColorStop(0.45, 'rgba(255, 236, 190, 0.03)');
+  sunGrad.addColorStop(1, 'rgba(16, 48, 40, 0.18)');
+  bctx.fillStyle = sunGrad;
+  bctx.fillRect(0, 0, size, size);
+
+  // Sombra ambiental en la base de las raíces para fundirse con el suelo húmedo/pradera
+  const rootGrad = bctx.createLinearGradient(0, size * 0.78, 0, size);
+  rootGrad.addColorStop(0, 'rgba(22, 42, 20, 0)');
+  rootGrad.addColorStop(1, 'rgba(22, 42, 20, 0.28)');
+  bctx.fillStyle = rootGrad;
+  bctx.fillRect(0, size * 0.78, size, size * 0.22);
+  bctx.globalCompositeOperation = 'source-over';
+
+  // Limpieza de bordes semitransparentes para evitar halos sobre césped/sendero pixel-art
+  const imgData = bctx.getImageData(0, 0, size, size);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a < 42) {
+      d[i + 3] = 0;
+    } else if (a < 150) {
+      d[i + 3] = Math.round(a * 0.85);
+    } else {
+      d[i + 3] = 255;
+    }
+  }
+  bctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+function ensureNatalTreeSprites(): [
+  [HTMLCanvasElement, HTMLCanvasElement] | null,
+  [HTMLCanvasElement, HTMLCanvasElement] | null,
+] {
+  if (typeof Image === 'undefined') return [null, null];
+  if (!natalTreeSprite1) {
+    natalTreeSprite1 = new Image();
+    natalTreeSprite1.decoding = 'async';
+    natalTreeSprite1.src = '/assets/pixelverse/natal-tree-1.png';
+  }
+  if (!natalTreeSprite2) {
+    natalTreeSprite2 = new Image();
+    natalTreeSprite2.decoding = 'async';
+    natalTreeSprite2.src = '/assets/pixelverse/natal-tree-2.png';
+  }
+  if (!natalTreeBaked1 && natalTreeSprite1.complete && natalTreeSprite1.naturalWidth > 0) {
+    const normal = bakeIntegratedTreeCanvas(natalTreeSprite1, false);
+    const flipped = bakeIntegratedTreeCanvas(natalTreeSprite1, true);
+    if (normal && flipped) natalTreeBaked1 = [normal, flipped];
+  }
+  if (!natalTreeBaked2 && natalTreeSprite2.complete && natalTreeSprite2.naturalWidth > 0) {
+    const normal = bakeIntegratedTreeCanvas(natalTreeSprite2, false);
+    const flipped = bakeIntegratedTreeCanvas(natalTreeSprite2, true);
+    if (normal && flipped) natalTreeBaked2 = [normal, flipped];
+  }
+  return [natalTreeBaked1, natalTreeBaked2];
+}
+
+/* ------------------------------------------------------------------ */
 /* CUADRO COMPLETO                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -5243,6 +6692,7 @@ export function renderIslaNatalFrame(params: IslaNatalRenderParams): void {
     shockwaves,
     travelerEvent,
   } = params;
+  if (!ctx) return;
 
   ctx.imageSmoothingEnabled = false;
 
@@ -5269,10 +6719,12 @@ export function renderIslaNatalFrame(params: IslaNatalRenderParams): void {
   const sway = reducedMotion ? 0 : Math.round(Math.sin(elapsed * 1.4) * 0.6);
   for (const t of ISLA_NATAL_TUFTS) {
     if (!isWorldBoxVisible(t.x - 6, t.y - 10, 12, 12, camX, camY, vw, vh)) continue;
+    if (!isPointOnNatalMeadow(t.x, t.y)) continue;
     drawTuft(ctx, t.x, t.y, t.seed, sway);
   }
   for (const f of ISLA_NATAL_FLOWERS) {
     if (!isWorldBoxVisible(f.x - 4, f.y - 8, 8, 10, camX, camY, vw, vh)) continue;
+    if (!isPointOnNatalMeadow(f.x, f.y)) continue;
     drawFlower(ctx, f.x, f.y, f.seed);
   }
   for (const p of ISLA_NATAL_PEBBLES) {
@@ -5286,17 +6738,104 @@ export function renderIslaNatalFrame(params: IslaNatalRenderParams): void {
 
   // Elementos ordenados por profundidad (oclusión correcta con el jugador)
   const ySorted: { sortY: number; draw: () => void }[] = [];
+  const [treeSpriteOak, treeSpriteTall] = ensureNatalTreeSprites();
 
-  for (const tree of ISLA_NATAL_TREES) {
-    if (!isWorldBoxVisible(tree.x - 28, tree.y - 80, 56, 92, camX, camY, vw, vh)) continue;
+  const drawHandcraftedTreeNatal = (
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    variant: 'forest' | 'meadow' | 'pine',
+    treeIndex: number,
+    elapsed: number,
+    reducedMotion: boolean
+  ) => {
+    const x = Math.round(cx);
+    const y = Math.round(cy);
+    const seed = hash2(x + treeIndex * 17, y - treeIndex * 13);
+    const useTallVariant =
+      variant === 'pine' ? true : variant === 'meadow' ? false : treeIndex % 2 === 1;
+    const spritePair = useTallVariant ? treeSpriteTall : treeSpriteOak;
+    const flipped = seed > 0.56;
+    const sprite = spritePair ? spritePair[flipped ? 1 : 0] : null;
+    const size = Math.round((useTallVariant ? 80 : 84) + (seed - 0.5) * 8);
+    const windShear = reducedMotion
+      ? 0
+      : Math.sin(elapsed * 1.15 + cx * 0.045 + cy * 0.02) * 0.016;
+    const shadowShift = Math.round(-windShear * 42);
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    // 1. Sombra moteada del dosel proyectada al este-sureste (acorde a palmeras y cabaña)
+    ctx.fillStyle = 'rgba(14, 38, 22, 0.16)';
+    ctx.beginPath();
+    ctx.ellipse(15 + shadowShift, 4, size * 0.42, size * 0.14, 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(14, 38, 22, 0.14)';
+    ctx.beginPath();
+    ctx.ellipse(24 + shadowShift, 1, size * 0.25, size * 0.10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Lecho de tierra húmeda, musgo y oclusión de contacto donde nacen las raíces
+    ctx.fillStyle = 'rgba(26, 54, 24, 0.34)';
+    ctx.beginPath();
+    ctx.ellipse(0, 3, size * 0.27, size * 0.09, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(58, 38, 20, 0.38)';
+    ctx.fillRect(-13, 1, 26, 4);
+    ctx.fillStyle = '#366b31';
+    ctx.fillRect(-16, 0, 8, 2);
+    ctx.fillRect(9, 1, 8, 2);
+
+    // 3. Árbol integrado a resolución pixel-art del mundo (imageSmoothingEnabled = false)
+    if (sprite) {
+      ctx.save();
+      ctx.translate(0, 6);
+      ctx.transform(1, 0, windShear, 1, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(sprite, Math.round(-size * 0.5), Math.round(-size * 0.94), size, size);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#4a2a14';
+      ctx.fillRect(-5, -14, 10, 16);
+      ctx.fillStyle = '#1f6a34';
+      ctx.beginPath();
+      ctx.ellipse(0, -34, 24, 20, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 4. Briznas nativas de la pradera y hojarasca que abrazan las raíces por delante
+    const grassOffsets = [-17, -11, -5, 2, 8, 14];
+    for (let gi = 0; gi < grassOffsets.length; gi++) {
+      const gx = grassOffsets[gi] + Math.round((hash2(x + gi * 11, y - gi * 7) - 0.5) * 3);
+      const gy = 3 + (gi % 2);
+      const gh = 3 + ((gi + treeIndex) % 3);
+      ctx.fillStyle = gi % 2 === 0 ? '#356f36' : '#3d7c3c';
+      ctx.fillRect(gx - 1, gy - gh + 1, 2, gh);
+      ctx.fillStyle = gi % 3 === 0 ? '#79c96a' : '#589c48';
+      ctx.fillRect(gx + sway, gy - gh, 1, gh - 1);
+    }
+    // Hojas caídas al pie del árbol
+    ctx.fillStyle = '#89b84a';
+    ctx.fillRect(-19 + (treeIndex % 4), 5, 2, 1);
+    ctx.fillRect(15 - (treeIndex % 3), 6, 2, 1);
+    ctx.fillStyle = '#c49645';
+    ctx.fillRect(6 + (treeIndex % 5), 6, 2, 1);
+
+    ctx.restore();
+  };
+
+  for (let ti = 0; ti < ISLA_NATAL_TREES.length; ti++) {
+    const tree = ISLA_NATAL_TREES[ti];
+    if (!isWorldBoxVisible(tree.x - 48, tree.y - 92, 96, 108, camX, camY, vw, vh)) continue;
     ySorted.push({
       sortY: tree.y + 10,
       draw: () =>
-        drawHandcraftedTree(ctx, tree.x, tree.y, tree.variant, elapsed, reducedMotion),
+        drawHandcraftedTreeNatal(ctx, tree.x, tree.y, tree.variant, ti, elapsed, reducedMotion),
     });
   }
   for (const p of ISLA_NATAL_PALMS) {
-    if (!isWorldBoxVisible(p.x - 40, p.y - 78, 80, 90, camX, camY, vw, vh)) continue;
+    if (!isWorldBoxVisible(p.x - 56, p.y - 116, 112, 130, camX, camY, vw, vh)) continue;
     ySorted.push({ sortY: p.y + 4, draw: () => drawPalm(ctx, p.x, p.y, p.seed, elapsed, reducedMotion) });
   }
   for (const b of ISLA_NATAL_BOULDERS) {
@@ -5334,7 +6873,22 @@ export function renderIslaNatalFrame(params: IslaNatalRenderParams): void {
     if (!isWorldBoxVisible(sign.x - 20, sign.y - 30, 40, 40, camX, camY, vw, vh)) continue;
     ySorted.push({
       sortY: sign.y + 1,
-      draw: () => drawGbcWoodenSign(ctx, sign.x, sign.y),
+      draw: () => {
+        const signOnSand = !isPointOnNatalMeadow(sign.x, sign.y) && !(sign.x < 590 && sign.y < 544);
+        if (signOnSand) {
+          ctx.fillStyle = 'rgba(104, 72, 36, 0.32)';
+          ctx.beginPath();
+          ctx.ellipse(sign.x + 2, sign.y + 1, 9, 3, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        drawGbcWoodenSign(ctx, sign.x, sign.y);
+        if (signOnSand) {
+          ctx.fillStyle = 'rgba(220, 186, 132, 0.72)';
+          ctx.fillRect(sign.x - 5, sign.y - 1, 10, 2);
+          ctx.fillStyle = 'rgba(246, 222, 176, 0.48)';
+          ctx.fillRect(sign.x - 4, sign.y - 1, 5, 1);
+        }
+      },
     });
   }
   ySorted.push({ sortY: SIGN_POS.y + 2, draw: () => drawSign(ctx) });

@@ -449,11 +449,11 @@ export function drawHandcraftedTree(
     const cShadow = isForest ? '#113a21' : '#1f480d';
     const cMid = isForest ? '#1d6b38' : '#3f7c19';
     const cSun = isForest ? '#3aa250' : '#6cb528';
-    const cHigh = isForest ? '#74d85e' : '#a8e63e';
-    const cGlint = isForest ? '#c4fba8' : '#ecfc98';
+    const cHigh = isForest ? '#86e470' : '#bcf65c';
+    const cGlint = isForest ? '#d4fec0' : '#fcfdbe';
     const cSpore = isForest ? '#5eead4' : '#fef08a';
 
-    // Tronco robusto de roble con vetas de corteza y aristas
+    // Tronco robusto de roble con vetas de corteza mejoradas (estilo detallado)
     ctx.fillStyle = '#100703';
     ctx.fillRect(-8, -16, 16, 20);
     ctx.fillRect(-13, 0, 6, 4);
@@ -469,16 +469,19 @@ export function drawHandcraftedTree(
     ctx.fillRect(-10, 1, 3, 2);
     ctx.fillStyle = '#9e5a2c';
     ctx.fillRect(-4, -15, 2, 15);
+    // Veta adicional
+    ctx.fillStyle = '#d48a58';
+    ctx.fillRect(-2, -14, 1, 12);
     ctx.fillStyle = '#c47d44';
     ctx.fillRect(-4, -12, 1, 6);
 
     ctx.fillStyle = '#261208';
     ctx.fillRect(1, -14, 3, 16);
-    // Nudo en el tronco
+    // Nudo en el tronco con más detalle
     ctx.fillStyle = '#1a0c04';
     ctx.fillRect(-1, -7, 3, 3);
     ctx.fillStyle = '#9e5a2c';
-    ctx.fillRect(-1, -8, 3, 1);
+    ctx.fillRect(0, -7, 1, 1);
 
     // La corona de hojas se mece levemente sobre el tronco.
     ctx.save();
