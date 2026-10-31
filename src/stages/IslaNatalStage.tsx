@@ -266,10 +266,8 @@ export function IslaNatalStage({
       : 'dusty';
   const paddleOnGround = pongWon && !paddleCarried;
   const hasBackpack = flagSet.has(NATAL_FLAGS.backpack);
-  // El cofre solo se abre con la combinación que entrega el viajero. Las
-  // partidas anteriores a esta secuencia conservan su progreso: si Pong ya
-  // estaba encendido, la palanca se da por instalada.
-  const chestOpened = flagSet.has(NATAL_FLAGS.chestOpened) || pongWon;
+  // El cofre solo se abre con la combinación que entrega el viajero.
+  const chestOpened = flagSet.has(NATAL_FLAGS.chestOpened);
   const chestCodeKnown = flagSet.has(NATAL_FLAGS.travelerWarning);
   const leverInstalled = flagSet.has(NATAL_FLAGS.leverInstalled) || arcadePowered;
   // El puerto norte sólo abre el carril de surf cuando Pong está ganado, la
@@ -766,7 +764,8 @@ export function IslaNatalStage({
     const cabin = cabinRef.current;
     if (!cabin.inside) return;
     const flags = stageRef.current.flagSet;
-    if (!flags.has(NATAL_FLAGS.backpack)) {
+
+    if (flags.has(NATAL_FLAGS.travelerWarning) && !flags.has(NATAL_FLAGS.backpack)) {
       setDialogModal({
         category: 'PRADERA DE CASA · UMBRAL BLOQUEADO',
         tone: 'wood',
@@ -775,6 +774,7 @@ export function IslaNatalStage({
       retroAudio.npcBlip(0.65);
       return;
     }
+
     cabin.inside = false;
     setCabinInside(false);
     const player = playerRef.current;
@@ -784,6 +784,12 @@ export function IslaNatalStage({
     player.walking = false;
     player.sprinting = false;
     retroAudio.doorTransition();
+
+    if (!flags.has(NATAL_FLAGS.travelerWarning)) {
+      player.x = ISLA_NATAL_TRAVELER_SCENE_PLAYER.x;
+      player.y = ISLA_NATAL_TRAVELER_SCENE_PLAYER.y;
+      setTravelerPhase('arrival');
+    }
   }, []);
 
   /** Cruce de puerta con fundido: Pixel ya caminó hasta el umbral. */
@@ -795,13 +801,6 @@ export function IslaNatalStage({
     if (cabinFadeTimerRef.current !== null) window.clearTimeout(cabinFadeTimerRef.current);
     cabinFadeTimerRef.current = window.setTimeout(() => {
       leaveCabin();
-      const player = playerRef.current;
-      player.x = ISLA_NATAL_TRAVELER_SCENE_PLAYER.x;
-      player.y = ISLA_NATAL_TRAVELER_SCENE_PLAYER.y;
-      player.facingDir = 'right';
-      player.walking = false;
-      player.sprinting = false;
-      setTravelerPhase('arrival');
       cabinFadeTimerRef.current = window.setTimeout(() => {
         setCabinFade(false);
         cabinFadeTimerRef.current = null;
@@ -857,7 +856,7 @@ export function IslaNatalStage({
 
   const interactChest = useCallback(() => {
     const flags = stageRef.current.flagSet;
-    if (flags.has(NATAL_FLAGS.chestOpened) || flags.has(NATAL_FLAGS.pongWon)) {
+    if (flags.has(NATAL_FLAGS.chestOpened)) {
       setDialogModal({
         category: 'PRADERA DE CASA · EL COFRE DEL ABUELO',
         tone: 'wood',
@@ -871,15 +870,6 @@ export function IslaNatalStage({
         category: 'PRADERA DE CASA · CERRADURA DE LATÓN',
         tone: 'wood',
         dialog: NATAL_CHEST_LOCKED_DIALOG,
-      });
-      return;
-    }
-    // Paso previo obligatorio dentro de la casa: recoger primero la mochila de Pixel.
-    if (!flags.has(NATAL_FLAGS.backpack)) {
-      setDialogModal({
-        category: 'PRADERA DE CASA · PREPARATIVOS',
-        tone: 'wood',
-        dialog: NATAL_CHEST_NEEDS_BACKPACK_DIALOG,
       });
       return;
     }
@@ -1220,7 +1210,7 @@ export function IslaNatalStage({
     if (travelerPhase === 'descend') {
       const done = window.setTimeout(() => {
         setDialogModal({
-          category: 'ISLA NATAL · ENVIADO DEL FUTURO',
+          category: 'ISLA NATAL · DYLAN (ENVIADO DEL FUTURO)',
           tone: 'arcane',
           dialog: NATAL_TRAVELER_DIALOG,
           lockClose: true,
@@ -1231,7 +1221,7 @@ export function IslaNatalStage({
               grantInventoryRef.current(['item-nota-codigo-cofre']);
               retroAudio.echoDiscover();
               showToast(
-                `Código del cofre recibido: ${ISLA_NATAL_CHEST_CODE}. Nota de código agregada al inventario.`
+                `¡Código del cofre (${ISLA_NATAL_CHEST_CODE}) recibido! Entra a tu casa a abrir el cofre.`
               );
               setDialogModal(null);
               setTravelerPhase('board');

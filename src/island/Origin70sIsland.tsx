@@ -233,7 +233,8 @@ interface InteractivePromptTarget {
     | 'castle-boss-conduit'
     | 'castle-ship-launch'
     | 'night-driver-cabinet'
-    | 'volcanic-guard';
+    | 'volcanic-guard'
+    | 'sand-mound';
   id: string;
   label: string;
   actionLabel: string;
@@ -1223,40 +1224,30 @@ export function Origin70sIsland({
     const rangeScale = getScannerRangeScale(st.progressState);
     const px = playerPosBridgeRef.current.x;
     const py = playerPosBridgeRef.current.y;
-    let bestMound: (typeof ISLAND_SAND_MOUNDS)[number] | null = null;
-    let bestDist = Infinity;
-    let excavatedNearby: (typeof ISLAND_SAND_MOUNDS)[number] | null = null;
-    let excavatedDist = Infinity;
+    const rangePx = Math.round(220 * rangeScale);
+    let detectedCount = 0;
     let anyInRange = false;
+
     for (const mound of ISLAND_SAND_MOUNDS) {
       const dist = Math.hypot(px - mound.x, py - mound.y);
-      if (dist >= 150 * rangeScale) continue;
+      if (dist >= rangePx) continue;
       anyInRange = true;
       const alreadyCollected = st.progressState.rpg.openedChestIds.includes(mound.id);
       if (mound.rewardItemId && !alreadyCollected) {
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestMound = mound;
-        }
-      } else if (alreadyCollected && dist < excavatedDist) {
-        excavatedDist = dist;
-        excavatedNearby = mound;
+        detectedCount++;
       }
     }
-    if (bestMound && bestMound.rewardItemId) {
-      retroAudio.shardCollect(3);
-      callbacksRef.current.onOpenChest(bestMound.id, [bestMound.rewardItemId]);
-      showToast(`¡Pulso Sonar! Tesoro revelado en ${bestMound.label} y añadido al inventario.`);
-      return true;
-    }
-    if (excavatedNearby) {
-      showToast(`${excavatedNearby.label}: ya fue excavado anteriormente.`);
+
+    if (detectedCount > 0) {
+      retroAudio.shardCollect(4);
+      showToast(`¡Pulso Sonar! ${detectedCount} objeto(s) enterrado(s) detectado(s) en la arena dentro del alcance. ¡Acércate y pulsa [E] para excavar!`);
       return true;
     }
     if (anyInRange) {
-      showToast('Montículo de arena: el pulso no detecta nada más que arena antigua.');
+      showToast('Pulso Sonar: se detecta arena dentro del alcance, pero ningún objeto oculto nuevo.');
       return true;
     }
+    showToast('Pulso Sonar: ningún objeto enterrado dentro del alcance actual.');
     return false;
   }, [showToast]);
 
@@ -1520,34 +1511,25 @@ export function Origin70sIsland({
 
   const handleToggleLanternAction = useCallback(() => {
     const st = latestStateRef.current;
-    const hasLantern =
+    const hasLanternBatteries =
       st.allUnlocked ||
-      st.progressState.island70s.abilitiesUnlocked.includes('phosphor-lantern') ||
-      st.progressState.rpg.inventoryItems.includes('item-lampara-fosforo');
-    if (!hasLantern) {
+      st.progressState.rpg.inventoryItems.includes('item-baterias-linterna');
+
+    if (!hasLanternBatteries) {
       retroAudio.npcBlip(0.75);
       showToast(
-        'Lámpara no disponible · Restaura Pong (1972) con 1.000 PTS para obtener la Lámpara de Fósforo.'
+        'Linterna inactiva · Necesito las Baterías de Litio-Cero para que la mochila pueda iluminar.'
       );
       return;
     }
+
     const nextState = !st.progressState.rpg.lanternActive;
-    if (nextState && !st.allUnlocked) {
-      const battery = st.progressState.rpg.powersState?.lanternBattery ?? 0;
-      if (battery <= 0.01) {
-        retroAudio.npcBlip(0.75);
-        showToast(
-          'Batería de la lámpara agotada · Recarga en un Punto de Guardado GBC.'
-        );
-        return;
-      }
-    }
     retroAudio.shardCollect(nextState ? 2 : 0);
     callbacksRef.current.onToggleLantern(nextState);
     showToast(
       nextState
-        ? 'Lámpara de Fósforo Ámbar ENCENDIDA · Penumbra disipada.'
-        : 'Lámpara de Fósforo Ámbar APAGADA.'
+        ? 'Linterna de la mochila ENCENDIDA · Penumbra disipada.'
+        : 'Linterna de la mochila APAGADA.'
     );
   }, [showToast]);
 
@@ -1642,6 +1624,41 @@ export function Origin70sIsland({
         return;
       }
 
+      if (target.kind === 'sand-mound') {
+        const mound = ISLAND_SAND_MOUNDS.find((m) => m.id === target.id);
+        if (!mound) return;
+        const alreadyCollected = st.progressState.rpg.openedChestIds.includes(mound.id);
+        if (alreadyCollected) {
+          showToast(`${mound.label}: ya fue excavado anteriormente.`);
+          return;
+        }
+        const px = playerPosBridgeRef.current.x;
+        const py = playerPosBridgeRef.current.y;
+        if (Math.hypot(px - mound.x, py - mound.y) > 85) {
+          showToast('Estás demasiado lejos para excavar este montículo.');
+          return;
+        }
+        retroAudio.shardCollect(3);
+        window.dispatchEvent(new CustomEvent('pixelverse-shake'));
+        if (mound.rewardItemId) {
+          callbacksRef.current.onOpenChest(mound.id, [mound.rewardItemId]);
+          if (mound.rewardItemId === 'item-polvo-fosforo') {
+            const newFuel = Math.min(200, flightFuelRef.current + 75);
+            setFlightFuel(newFuel);
+            callbacksRef.current.onUpdatePowerEnergy?.('flightFuel', 75);
+            showToast('¡Combustible para la tabla encontrado! Sistema de vuelo recargado.');
+          } else if (mound.rewardItemId === 'item-engranaje-puente') {
+            showToast('¡Engranaje perdido del puente encontrado! Registrado en tu inventario.');
+          } else {
+            showToast(`¡Objeto encontrado: ${mound.label}!`);
+          }
+        } else {
+          callbacksRef.current.onOpenChest(mound.id, []);
+          showToast('Montículo excavado: arena antigua y restos sin valor.');
+        }
+        return;
+      }
+
       if (target.kind === 'wooden-sign') {
         const sign = ISLAND_WOODEN_SIGNS.find((s) => s.id === target.id);
         if (!sign) return;
@@ -1658,6 +1675,12 @@ export function Origin70sIsland({
       if (target.kind === 'rock-tunnel') {
         const tunnel = COASTAL_SUBTERRANEAN_TUNNELS.find((t) => t.id === target.id);
         if (!tunnel) return;
+
+        if (!st.progressState.rpg.lanternActive && !st.allUnlocked) {
+          retroAudio.npcBlip(0.7);
+          showToast('Está demasiado oscuro para entrar en el túnel. Necesitaré una linterna.');
+          return;
+        }
         const secretId = tunnel.secretId;
         const firstDiscovery =
           Boolean(secretId) &&
@@ -1865,6 +1888,12 @@ export function Origin70sIsland({
       if (target.kind === 'cave-entrance') {
         const cave = ISLAND_NORTH_CAVE_ENTRANCES.find((entry) => entry.id === target.id);
         if (!cave) return;
+
+        if (!st.progressState.rpg.lanternActive && !st.allUnlocked) {
+          retroAudio.npcBlip(0.7);
+          showToast('Está demasiado oscuro. Necesitaré una linterna para poder pasar.');
+          return;
+        }
         const firstDiscovery = !st.progressState.rpg.discoveredSecretIds.includes(
           cave.secretId
         );
@@ -1887,6 +1916,11 @@ export function Origin70sIsland({
       }
 
       if (target.kind === 'waterfall-entrance') {
+        if (!st.progressState.rpg.lanternActive && !st.allUnlocked) {
+          retroAudio.npcBlip(0.7);
+          showToast('La gruta tras la cascada está en penumbra. Necesitaré una linterna.');
+          return;
+        }
         const firstTime =
           !st.progressState.rpg.discoveredSecretIds.includes('secret-cascada-gruta');
         if (firstTime) {
@@ -2503,11 +2537,6 @@ export function Origin70sIsland({
           const narrative = st.progressState.island70s.narrativeEvents;
           const laserOpen = st.origenGeneratorGateOpen;
           const repaired = narrative.includes('origen-laser-controles-reparados');
-          const questStarted =
-            st.progressState.rpg.questStates['quest-laser-seguridad'] !== undefined;
-          const froggerCleared = Boolean(
-            st.progressState.games['frogger']?.memoryUnlocked
-          );
           const hasIron = st.progressState.rpg.inventoryItems.includes(
             'item-soldador-estaño'
           );
@@ -2529,6 +2558,43 @@ export function Origin70sIsland({
               ],
               hint: 'Cruzá el paso y examiná la instalación cubierta por la vegetación.',
               accentHex: '#22c55e',
+            });
+            return;
+          }
+
+          if (!repaired) {
+            if (hasIron) {
+              setActiveDialog({
+                category: exam.category,
+                title: exam.label,
+                subtitle: 'Mecanismo dañado · Soldador disponible',
+                paragraphs: [
+                  'Al abrir la consola confirmas el diagnóstico: tres contactos principales están resquebrajados por la onda expansiva del Reinicio Cero.',
+                  'Con el soldador de Dylan en tu mochila, puedes intentar reparar los contactos para devolver la continuidad al circuito.',
+                ],
+                primaryAction: {
+                  label: 'Iniciar Reparación con Soldador',
+                  onSelect: () => {
+                    setActiveDialog(null);
+                    setLaserRepairOpen(true);
+                  },
+                },
+                accentHex: '#f97316',
+              });
+              return;
+            }
+
+            // Sin soldador
+            setActiveDialog({
+              category: exam.category,
+              title: exam.label,
+              subtitle: 'Mecanismo dañado · Falta soldador',
+              paragraphs: [
+                'La palanca se mueve en vacío. Al examinar el interior, ves que los contactos eléctricos están rotos.',
+                'Necesitarás un soldador de precisión para unir las pistas y restaurar la conexión.',
+              ],
+              hint: 'Busca a Dylan en el taller Retro State TS para conseguir un soldador.',
+              accentHex: '#f43f5e',
             });
             return;
           }
@@ -2588,73 +2654,6 @@ export function Origin70sIsland({
             });
             return;
           }
-
-          if (!questStarted) {
-            retroAudio.npcBlip(0.72);
-            setActiveDialog({
-              category: exam.category,
-              title: exam.label,
-              subtitle: 'Mecanismo sin respuesta',
-              paragraphs: [
-                'La palanca se mueve en vacío. Los indicadores siguen en rojo y el láser zumba sin interrupción: la orden de apagado no llega al sistema.',
-                'Los contactos electrónicos de la consola están partidos. El técnico Dylan, en el Taller Retro State TS del bosque, sabe cómo devolverles la continuidad.',
-              ],
-              hint: 'Hablá con Dylan en el taller y contale lo que viste en la palanca.',
-              accentHex: '#f97316',
-            });
-            return;
-          }
-
-          if (!froggerCleared) {
-            retroAudio.npcBlip(0.7);
-            setActiveDialog({
-              category: exam.category,
-              title: exam.label,
-              subtitle: 'La palanca sigue muerta',
-              paragraphs: [
-                'La consola no responde. Dylan no quiere que fuerces el mecanismo sin antes comprobar que podés recuperar una memoria arcade sin dañarla.',
-                'El gabinete «Cruce de Circuitos» sigue esperando en el claro del bosque.',
-              ],
-              hint: 'Superá el gabinete del bosque y volvé a hablar con Dylan.',
-              accentHex: '#f97316',
-            });
-            return;
-          }
-
-          if (!hasIron) {
-            retroAudio.npcBlip(0.7);
-            setActiveDialog({
-              category: exam.category,
-              title: exam.label,
-              subtitle: 'Falta el soldador de estaño',
-              paragraphs: [
-                'El diagnóstico es claro: tres contactos fríos, con la soldadura resquebrajada. Sin estaño y sin la punta fina del soldador de Dylan, no hay forma de cerrar la continuidad.',
-                'Dylan necesita germanio de repuesto. La caja estanca quedó en la orilla opuesta del lago del bosque.',
-              ],
-              hint: 'Rodeá el lago por el este, recuperá los transistores y lleváselos a Dylan en el taller.',
-              accentHex: '#fb923c',
-            });
-            return;
-          }
-
-          setActiveDialog({
-            category: exam.category,
-            title: exam.label,
-            subtitle: 'Contactos fríos detectados · Soldador listo',
-            paragraphs: [
-              'Con la punta del soldador iluminás la placa. Tres uniones están resquebrajadas por las ondas del Reinicio Cero; las otras tres mantienen continuidad.',
-              'Identificá las uniones dañadas y soldalas sin puentear las pistas vecinas.',
-            ],
-            primaryAction: {
-              label: 'Iniciar Reparación de Contactos',
-              onSelect: () => {
-                setActiveDialog(null);
-                setLaserRepairOpen(true);
-              },
-            },
-            accentHex: '#f97316',
-          });
-          return;
         }
 
         // --- SECTOR 03 · INSTALACIÓN QUE EL LÁSER PROTEGÍA ---
@@ -3014,67 +3013,55 @@ export function Origin70sIsland({
         if (snpc.id === 'npc-dylan-tecnico') {
           const narrative = st.progressState.island70s.narrativeEvents;
           const laserDone = st.allUnlocked || narrative.includes('origen-laser-desactivado');
-          const froggerCleared = Boolean(st.progressState.games['frogger']?.memoryUnlocked);
-          const hasLakeTransistors = st.progressState.rpg.inventoryItems.includes(
-            'item-transistores-germanio-lago'
-          );
           const hasTinComponents = st.progressState.rpg.inventoryItems.includes(
             'item-componentes-estano'
           );
           const hasSolderingIron = st.progressState.rpg.inventoryItems.includes(
             'item-soldador-estaño'
           );
-          const deliveredComponents = narrative.includes('origen-transistores-lago-entregados');
           const laserRepaired = narrative.includes('origen-laser-controles-reparados');
-          const hasBothComponents = (hasLakeTransistors && hasTinComponents) || deliveredComponents;
 
-          // --- TRAMA PRINCIPAL: EL LÁSER DE SEGURIDAD Y LA PALANCA ---
+          // --- TRAMA PRINCIPAL: EL SOLDADOR Y LA PALANCA ---
           if (!laserDone) {
-            if (hasBothComponents && !hasSolderingIron && !laserRepaired) {
+            if (hasTinComponents && !hasSolderingIron && !laserRepaired) {
               setActiveDialog({
-                category: 'RETRO STATE TS · ENTREGA DE COMPONENTES',
+                category: 'RETRO STATE TS · ENTREGA DE MATERIAL',
                 title: snpc.name,
-                subtitle: 'Germanio y estaño del lago en la mochila',
+                subtitle: 'Componentes de estaño en la mochila',
                 paragraphs: [
-                  '«¡Excelente, Pixel! Recuperaste los transistores de germanio y los componentes de estaño del baúl del lago.»',
-                  '«Con estos materiales ya puedo preparar el soldador de estaño inmediatamente. Tomá mi soldador de lápiz: la punta está afilada para no quemar las pistas vecinas.»',
+                  '«¡Pixel! Veo que traes el estaño que te pedí. Desde el Reinicio Cero no pude conseguir suministros para mi taller.»',
+                  '«Con esto puedo preparar el soldador de lápiz inmediatamente. Su punta es perfecta para los contactos de la palanca de seguridad.»',
+                  '«Si tienes los transistores de germanio, dáselos a mi colega Kertz; él los necesita para la iluminación de las cuevas.»',
                 ],
                 primaryAction: {
-                  label: 'Entregar Componentes y Recibir el Soldador',
+                  label: 'Entregar Estaño y Recibir el Soldador',
                   onSelect: () => {
-                    callbacksRef.current.onConsumeInventoryItems?.([
-                      'item-transistores-germanio-lago',
-                      'item-componentes-estano',
-                    ]);
+                    callbacksRef.current.onConsumeInventoryItems?.(['item-componentes-estano']);
                     callbacksRef.current.onOpenChest('origen-dylan-soldador', [
                       'item-soldador-estaño',
                     ]);
-                    callbacksRef.current.onRecordNarrativeEvent?.(
-                      'origen-transistores-lago-entregados'
-                    );
                     callbacksRef.current.onRecordNarrativeEvent?.('origen-soldador-entregado');
                     callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
                     retroAudio.questComplete();
                     setActiveDialog({
                       category: 'RETRO STATE TS · HERRAMIENTA ENTREGADA',
                       title: 'Soldador de Estaño de Dylan',
-                      subtitle: 'La palanca ya puede recibir la orden de apagado',
+                      subtitle: 'Listo para reparar la palanca',
                       paragraphs: [
-                        '«Escuchá bien: en la consola hay seis contactos. Tres están fríos, con la soldadura resquebrajada por las ondas del Reinicio. Sólo esos necesitan estaño.»',
-                        '«Calentá cada punto dañado y unilo con pulso firme. Cuando la continuidad cierre, la palanca va a responder y el láser va a apagarse por sectores.»',
+                        '«Aquí tienes. El soldador está cargado y listo. Recuerda: en la consola de seguridad hay tres contactos resquebrajados que debes unir.»',
+                        '«Cuando cierres la continuidad, la palanca responderá y podrás desactivar la barrera láser.»',
                       ],
-                      hint: 'Volvé a la consola de la palanca, al oeste de la compuerta. Identificá los contactos fríos y soldalos con [E].',
+                      hint: 'Dirígete a la consola de la palanca, al oeste de la compuerta. Identifica los contactos dañados y suéldalos.',
                       accentHex: '#f97316',
                     });
                   },
                 },
-                accentHex: '#fb923c',
+                accentHex: '#94a3b8',
               });
               return;
             }
 
             if (laserRepaired || hasSolderingIron) {
-              callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
               setActiveDialog({
                 category: snpc.role.toUpperCase(),
                 title: snpc.name,
@@ -3083,49 +3070,32 @@ export function Origin70sIsland({
                   : 'Soldador entregado · La consola espera',
                 paragraphs: laserRepaired
                   ? [
-                      '«Ya soldaste los contactos de la palanca. No queda nada que reparar: volvé a la consola y accioná la palanca para enviar la orden de apagado.»',
-                      '«Los haces deberían caer por sectores. No te quedes parado sobre la línea cuando empiecen a bajar.»',
+                      '«Ya soldaste los contactos de la palanca. Ahora solo falta accionarla para enviar la orden de apagado al sistema láser.»',
+                      '«No te preocupes por el estaño, el soldador es tuyo. Úsalo bien.»',
                     ]
                   : [
-                      '«Ya tenés mi soldador de estaño. La consola de la palanca está al oeste de la compuerta: seis contactos, tres fríos.»',
-                      '«Calentá cada punto dañado y unilo con pulso firme. Cuando cierres la continuidad, la palanca va a responder.»',
+                      '«Ya tienes mi soldador. Busca la consola de la palanca de seguridad al oeste de la compuerta láser.»',
+                      '«Calienta los tres puntos dañados hasta que la soldadura brille. Solo entonces la palanca volverá a funcionar.»',
                     ],
                 hint: laserRepaired
-                  ? 'Accioná la palanca de la consola de seguridad, al oeste de la compuerta del Sector 03.'
-                  : 'Volvé a la consola de la palanca y soldá los contactos fríos con [E].',
+                  ? 'Acciona la palanca en la consola de seguridad para desactivar el láser.'
+                  : 'Ve a la consola de la palanca y usa tu soldador para reparar los contactos.',
                 accentHex: '#22c55e',
               });
               return;
             }
 
-            if (froggerCleared) {
-              callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
-              setActiveDialog({
-                category: snpc.role.toUpperCase(),
-                title: snpc.name,
-                subtitle: 'Superaste Frogger · Abrí el cofre del lago',
-                paragraphs: [
-                  '«¡Superaste el desafío del Cruce de Circuitos! Al llegar al centro del lago, el cofre se ha revelado.»',
-                  '«Abrí el baúl para recuperar los 3 transistores de germanio y los componentes de estaño que dejé allí antes del Reinicio Cero.»',
-                  '«Cuando los tengas en la mochila, traémelos y prepararé el soldador de estaño para reparar la palanca de seguridad.»',
-                ],
-                hint: 'Avanzá hacia el cofre en el centro del lago, abrilo para recoger el germanio y el estaño, y volvé con Dylan.',
-                accentHex: '#fb923c',
-              });
-              return;
-            }
-
-            callbacksRef.current.onUpdateQuest('quest-laser-seguridad', 'active');
+            // Dylan explica su necesidad de estaño
             setActiveDialog({
               category: snpc.role.toUpperCase(),
               title: snpc.name,
-              subtitle: 'Necesito transistores de germanio y estaño',
+              subtitle: 'Necesito componentes de estaño',
               paragraphs: [
-                '«Necesito reparar la palanca de seguridad, pero tengo un problema. Me faltan transistores de germanio y estaño. Antes del Reinicio Cero podía conseguirlos, pero desde que ocurrió todo, los suministros dejaron de llegar.»',
-                '«Hay un baúl del otro lado del lago del bosque. Creo que todavía están allí los componentes que necesito. Si lográs recuperarlos, podré preparar el soldador y reparar el mecanismo.»',
-                '«Cerca del lago verás el gabinete Frogger «Cruce de Circuitos». Al jugar, cruzarás hacia el centro del lago donde se visualiza el cofre con los componentes.»',
+                '«Necesito preparar mi soldador para reparar el mecanismo de seguridad, pero me falta estaño de alta pureza.»',
+                '«Desde el Reinicio Cero los suministros dejaron de llegar. Sé que había un baúl con materiales en el lago del bosque, tras el prototipo de Frogger.»',
+                '«Si me traes el estaño, te daré el soldador. Y si encuentras los transistores de germanio, mi colega Kertz te lo agradecerá.»',
               ],
-              hint: 'Encontrá el gabinete Frogger cerca del lago del bosque, superá el desafío para revelar el cofre y recuperá los transistores y el estaño.',
+              hint: 'Supera el desafío Frogger en el lago del bosque, recupera el estaño del cofre y tráeselo a Dylan.',
               accentHex: '#fb923c',
             });
             return;
@@ -3195,16 +3165,81 @@ export function Origin70sIsland({
         }
 
         if (snpc.id === 'npc-maestro-kertz') {
+          const narrative = st.progressState.island70s.narrativeEvents;
+          const hasLakeTransistors = st.progressState.rpg.inventoryItems.includes(
+            'item-transistores-germanio-lago'
+          );
+          const hasBatteries = st.progressState.rpg.inventoryItems.includes(
+            'item-baterias-linterna'
+          );
+          const germaniumDelivered = narrative.includes('origen-germanio-entregado');
+
+          // --- MISIÓN: TRANSISTORES DE GERMANIO Y LINTERNA ---
+          if (!germaniumDelivered) {
+            if (hasLakeTransistors) {
+              setActiveDialog({
+                category: 'RETRO STATE TS · ENTREGA DE GERMANIO',
+                title: snpc.name,
+                subtitle: 'Transistores de germanio recuperados',
+                paragraphs: [
+                  '«¡Esos son! Transistores de germanio de 1976. Con estos semiconductores podré restaurar los circuitos de iluminación de las cuevas del noroeste.»',
+                  '«A cambio, toma estas Baterías de Litio-Cero. Activarán la linterna de tu mochila de forma permanente.»',
+                  '«Ahora podrás explorar las zonas oscuras sin miedo a perderte entre los bits.»',
+                ],
+                primaryAction: {
+                  label: 'Entregar Germanio y Recibir Baterías',
+                  onSelect: () => {
+                    callbacksRef.current.onConsumeInventoryItems?.(['item-transistores-germanio-lago']);
+                    callbacksRef.current.onOpenChest('origen-kertz-baterias', [
+                      'item-baterias-linterna',
+                    ]);
+                    callbacksRef.current.onRecordNarrativeEvent?.('origen-germanio-entregado');
+                    retroAudio.questComplete();
+                    setActiveDialog({
+                      category: 'RETRO STATE TS · LINTERNA ACTIVADA',
+                      title: 'Baterías de Litio-Cero',
+                      subtitle: 'La linterna ya tiene energía infinita',
+                      paragraphs: [
+                        '«Las baterías están instaladas. No se agotarán: el circuito de carga por movimiento las mantendrá siempre al máximo.»',
+                        '«Prueba a encenderla con la tecla [L]. Verás un haz de luz que te permitirá ver en las cuevas más profundas.»',
+                      ],
+                      hint: 'Pulsa [L] para encender/apagar la linterna. Ahora puedes entrar en las Cavernas del Código al noroeste.',
+                      accentHex: '#facc15',
+                    });
+                  },
+                },
+                accentHex: '#fb923c',
+              });
+              return;
+            }
+
+            // Kertz explica su necesidad de germanio
+            setActiveDialog({
+              category: snpc.role.toUpperCase(),
+              title: snpc.name,
+              subtitle: 'Necesito transistores de germanio',
+              paragraphs: [
+                '«Dylan te habrá contado: el Reinicio Cero fundió los sistemas de iluminación de las cavernas. Necesito transistores de germanio para repararlos.»',
+                '«Si logras cruzar el lago del bosque mediante el desafío Frogger, encontrarás componentes en un baúl en la otra orilla.»',
+                '«Traeme el germanio y te daré las baterías para que tu linterna vuelva a la vida.»',
+              ],
+              hint: 'Juega a Frogger en la orilla del lago, recupera el germanio del cofre y tráeselo a Kertz.',
+              accentHex: '#fb923c',
+            });
+            return;
+          }
+
+          // --- LÓGICA ORIGINAL DE KERTZ (GENERADOR Y SOLDADOR LÓGICO) ---
           const qDone = st.progressState.rpg.questStates['quest-taller-ttl'] === 'completed';
-          const hasCap =
-            st.progressState.rpg.inventoryItems.includes('item-condensador-cuarzo') ||
-            st.allUnlocked;
           const generatorRepaired = st.progressState.island70s.narrativeEvents.includes(
             'origen-generador-reparado'
           );
           const partDelivered = st.progressState.island70s.narrativeEvents.includes('origen-pieza-entregada');
           const hasPart = st.progressState.rpg.inventoryItems.includes('item-pieza-generador');
-          const generatorQuest = st.progressState.rpg.questStates['quest-generador-retrostate'];
+          const hasCap =
+            st.progressState.rpg.inventoryItems.includes('item-condensador-cuarzo') ||
+            st.allUnlocked;
+          const generatorQuest = st.progressState.rpg.questStates['quest-generador-retrostate'] === 'active';
 
           if (!generatorRepaired) {
             if (partDelivered) {
@@ -3864,15 +3899,7 @@ export function Origin70sIsland({
         retroAudio.echoDiscover();
         let primaryAction: ActiveDialogModal['primaryAction'] = undefined;
         if (exhibit.mode === 'playable') {
-          if (exhibit.linkedGameId === 'pong') {
-            primaryAction = {
-              label: st.pongRestored ? 'Jugar Pong (1972)' : 'Ir a Pong (1972)',
-              onSelect: () => {
-                setActiveDialog(null);
-                callbacksRef.current.onEnterPong();
-              },
-            };
-          } else if (
+          if (
             exhibit.linkedGameId === 'breakout' &&
             (st.breakoutRestored ||
               st.progressState.rpg.discoveredSecretIds.includes(
@@ -4039,11 +4066,6 @@ export function Origin70sIsland({
         return;
       }
 
-      if (target.kind === 'pong-cabinet') {
-        retroAudio.uiClick();
-        callbacksRef.current.onEnterPong();
-        return;
-      }
 
       if (target.kind === 'pong-hoverboard-ride') {
         const routeCost = Math.ceil(
@@ -4828,6 +4850,12 @@ export function Origin70sIsland({
         }
       }
 
+      if (!hasModifier && (code === 'KeyL' || lowerKey === 'l')) {
+        e.preventDefault();
+        handleToggleLanternAction();
+        return;
+      }
+
       if (!hasModifier && isActionPressed(e, 'powers', keybindings)) {
         if (latestStateRef.current.chronoWarpActive) return;
         e.preventDefault();
@@ -5224,44 +5252,23 @@ export function Origin70sIsland({
             callbacksRef.current.onRechargePowers?.();
             callbacksRef.current.onSavePosition(player.x, player.y);
             setActiveDialog({
-              category: 'CALA DE LLEGADA · ENCUENTRO CON EL VIEJO AMIGO',
-              title: '«El puente se quebró con el temblor»',
-              subtitle: 'El amigo del abuelo te entrega el Pulso Sonar',
+              category: 'CALA DE LLEGADA · EL VIEJO AMIGO DEL ABUELO',
+              title: '«El Reinicio Cero»',
+              subtitle: 'El viejo amigo del abuelo te entrega el poder Sonar',
               paragraphs: [
-                '«¡Pixel! Justo a tiempo. Soy un viejo amigo de tu abuelo. Desde el temblor no puedo cruzar al otro lado: el puente de la cala se vino abajo y el engranaje que mueve el torno se perdió en la arena de esta playa.»',
-                '«TU ABUELO ME ENCOMENDÓ QUE TE LO DIERA. Dijo que serviría para encontrar objetos ocultos cercanos. Yo no lo entiendo; quizás a ti te sirva.»',
-                'El viejo coloca en tus manos el Emisor de Pulso Sonar. Su frecuencia hace visible lo que la arena y los rincones antiguos esconden.',
+                '«¡Pixel! Menos mal que llegaste. Soy un viejo amigo de tu abuelo. El Reinicio Cero convirtió la isla en un caos total.»',
+                '«Todos los sectores se cerraron automáticamente. Los equipos electrónicos y los juegos dejaron de funcionar.»',
+                '«Tu abuelo me encargó darte esto.» Te entrega el poder Sonar. «Permite detectar objetos enterrados bajo la arena, aunque yo no comprendo completamente su funcionamiento.»',
+                'El poder Sonar queda registrado en tu sistema de poderes. La búsqueda y los sectores bloqueados no se iniciarán automáticamente.',
               ],
-              hint: 'Equipá Pulso Sonar con [1-4] y emití con [F / Acción]. No consume energía: podés usarlo siempre. Buscá el Engranaje del Puente bajo la arena.',
+              hint: 'Equipá el Sonar con [1-4] y utilízalo cuando desees explorar la arena.',
               accentHex: '#10b981',
             });
           }
         }
       }
 
-      const powersState = st.progressState.rpg.powersState;
-      if (powersState && st.progressState.rpg.lanternActive && !st.allUnlocked) {
-        if (powersState.lanternBattery <= 0.01) {
-          if (!lanternDepletedRef.current) {
-            lanternDepletedRef.current = true;
-            callbacksRef.current.onToggleLantern(false);
-            showToast(
-              'Lámpara de Fósforo agotada · Recarga la batería en un Punto de Guardado GBC.'
-            );
-          }
-        } else if (!st.modalOpen) {
-          lanternDepletedRef.current = false;
-          pendingLanternDrainRef.current += dt * LANTERN_DRAIN_PER_SECOND;
-          if (pendingLanternDrainRef.current >= 0.5) {
-            const drain = Math.floor(pendingLanternDrainRef.current);
-            pendingLanternDrainRef.current -= drain;
-            callbacksRef.current.onUpdatePowerEnergy?.('lanternBattery', -drain);
-          }
-        }
-      } else {
-        lanternDepletedRef.current = false;
-        pendingLanternDrainRef.current = 0;
-      }
+
 
       if (pongBoardDepartureRef.current) {
         pongBoardDepartureRef.current.elapsed += dt;
@@ -5837,6 +5844,24 @@ export function Origin70sIsland({
                 accentHex: '#fde047',
               },
               74
+            );
+          }
+
+          // Montículos de arena explorables en la playa de la cala
+          for (const mound of ISLAND_SAND_MOUNDS) {
+            const alreadyCollected = st.progressState.rpg.openedChestIds.includes(mound.id);
+            if (alreadyCollected) continue;
+            consider(
+              {
+                kind: 'sand-mound',
+                id: mound.id,
+                label: mound.label,
+                actionLabel: 'Excavar (E)',
+                x: mound.x,
+                y: mound.y + 4,
+                accentHex: '#f59e0b',
+              },
+              65
             );
           }
 

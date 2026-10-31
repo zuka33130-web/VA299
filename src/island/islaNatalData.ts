@@ -552,6 +552,7 @@ export const ARCADE_DIALOG_LEVER_READY: IslaNatalDialog = {
 export const ARCADE_DIALOG_POWER_ON: IslaNatalDialog = {
   title: 'Encender la máquina',
   paragraphs: [
+    '«Debo poder ganar en este juego. Lo debo hacer por la humanidad»',
     'Con la palanca del abuelo en su sitio, el tubo tarda en despertar: un zumbido grave, una línea blanca que tiembla y por fin el punto de luz.',
     'La pantalla no refleja tu cara. Refleja la isla entera, vista desde muy arriba, y algo más que aún no reconoces.',
     'Tres goles. Como entonces. Como siempre.',
@@ -625,7 +626,7 @@ export const NATAL_STORM_QUESTION_DIALOG: IslaNatalDialog = {
 };
 
 export const NATAL_TRAVELER_DIALOG: IslaNatalDialog = {
-  title: 'Enviado del futuro',
+  title: 'Dylan (Enviado del futuro)',
   subtitle: 'Frente a la casa de Pixel',
   paragraphs: [
     '«Estás aquí. El ruido que escuchaste fue lo que todos temíamos en la otra dimensión. El Gran Rey Koopa ha comenzado con el Reinicio Cero.',
@@ -650,7 +651,6 @@ export const NATAL_NO_BACKPACK_EXIT_DIALOG: IslaNatalDialog = {
   title: 'El umbral de la puerta',
   subtitle: 'Interior de la cabaña',
   paragraphs: [
-    'Intentas girar el picaporte, pero tus pasos se detienen en seco.',
     '«No puedo salir sin mi mochila. Necesito llevar conmigo todo lo que encontré».',
   ],
   hint: 'Recoge tu mochila colgada junto a la ventana antes de salir de casa.',

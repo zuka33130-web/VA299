@@ -437,7 +437,13 @@ export const ORIGEN_FOREST_LAKE = {
   islet: { x: 620, y: 1360, r: 26 },
 } as const;
 
-export function isInsideOrigenForestLake(x: number, y: number): boolean {
+export function isInsideOrigenForestLake(x: number, y: number, froggerCleared = false): boolean {
+  if (froggerCleared) {
+    // Paso de troncos y rocas que conectan la orilla oriental con el islote central
+    if (x >= 590 && x <= 850 && y >= 1340 && y <= 1380) {
+      return false;
+    }
+  }
   return (
     x > ORIGEN_FOREST_LAKE.x1 &&
     x < ORIGEN_FOREST_LAKE.x2 &&
@@ -542,8 +548,8 @@ export const ISLAND_KEY_COORDS = {
   origenGeneratorGate: { x: 1444, y: 1312 },
   origenLaserConsole: { x: 1398, y: 1312 },
   origenSecurityRuins: { x: 1524, y: 1388 },
-  origenLakeChest: { x: 720, y: 1458 },
-  origenFroggerCabinet: { x: 1148, y: 1128 },
+  origenLakeChest: { x: 620, y: 1358 },
+  origenFroggerCabinet: { x: 856, y: 1344 },
   pongCabinet: { x: 2820, y: 1660 },
   pongBoardLaunch: { x: 2710, y: 1610 },
   pongBoardLanding: { x: 1760, y: 780 },
@@ -821,24 +827,10 @@ export interface IslandSandMoundSpec {
 }
 
 export const ISLAND_SAND_MOUNDS: IslandSandMoundSpec[] = [
-  { id: 'mound-1', x: 260, y: 1980, rewardItemId: 'item-fragmento-chip', label: 'Montículo de Arena Occidental' },
-  { id: 'mound-2', x: 340, y: 2080, rewardItemId: null, label: 'Montículo de Arena Simple' },
-  { id: 'mound-3', x: 640, y: 2000, rewardItemId: 'item-cristal-resonante', label: 'Montículo de Arena Central' },
-  { id: 'mound-4', x: 780, y: 2060, rewardItemId: null, label: 'Montículo de Arena Oriental' },
-  {
-    id: 'mound-engranaje-puente',
-    x: 300,
-    y: 2160,
-    rewardItemId: 'item-engranaje-puente',
-    label: 'Montículo del Engranaje',
-  },
-  {
-    id: 'mound-brujula-mareas',
-    x: 780,
-    y: 2160,
-    rewardItemId: 'item-brujula-mareas',
-    label: 'Montículo de la Brújula',
-  },
+  { id: 'mound-combustible-tabla', x: 260, y: 1980, rewardItemId: 'item-polvo-fosforo', label: 'Montículo de Combustible de Tabla' },
+  { id: 'mound-engranaje-puente', x: 300, y: 2160, rewardItemId: 'item-engranaje-puente', label: 'Montículo del Engranaje del Puente' },
+  { id: 'mound-arena-central', x: 520, y: 2040, rewardItemId: null, label: 'Montículo de Arena Simple' },
+  { id: 'mound-arena-oriental', x: 700, y: 2100, rewardItemId: null, label: 'Montículo de Arena Oriental' },
 ];
 
 export const ISLAND_DIAMONDS: IslandDiamondSpec[] = [
@@ -941,7 +933,7 @@ export function isSouthShortcutUnlocked(switches: string[], allUnlocked = false)
 export function isPointWalkableOnIsland(
   px: number,
   py: number,
-  opts: { southShortcut: boolean; gargantaBridge: boolean }
+  opts: { southShortcut: boolean; gargantaBridge: boolean; froggerCleared?: boolean }
 ): WalkableRect | null {
   for (let i = ISLAND_WALKABLE_RECTS.length - 1; i >= 0; i--) {
     const r = ISLAND_WALKABLE_RECTS[i];
@@ -949,7 +941,7 @@ export function isPointWalkableOnIsland(
     if (r.requiresCondition === 'garganta-bridge' && !opts.gargantaBridge) continue;
     if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
       // El lago del bosque resta superficie caminable dentro del claro.
-      if (isInsideOrigenForestLake(px, py)) return null;
+      if (isInsideOrigenForestLake(px, py, Boolean(opts.froggerCleared))) return null;
       return r;
     }
   }

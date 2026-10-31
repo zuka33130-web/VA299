@@ -415,8 +415,8 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     accentHex: '#fb923c',
     shortCode: 'TR-LAGO',
     description:
-      'Tres semiconductores de germanio que sobrevivieron al Reinicio Cero dentro de una caja estanca, en el lago del bosque. Dylan los necesita para preparar el soldador de estaño.',
-    usageHint: 'Llévaselos al técnico Dylan en el Taller Retro State TS del bosque.',
+      'Tres semiconductores de germanio que sobrevivieron al Reinicio Cero dentro de una caja estanca, en el lago del bosque. Son necesarios para recuperar el sistema de iluminación de las cuevas.',
+    usageHint: 'Llévaselos al Maestro Kertz en el Taller Retro State TS del bosque.',
     usableAction: 'inspect',
   },
   'item-componentes-estano': {
@@ -427,8 +427,20 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     accentHex: '#94a3b8',
     shortCode: 'ESTAÑO',
     description:
-      'Componentes de estaño de alta pureza hallados en el baúl del lago del bosque. Esenciales junto a los transistores de germanio para que Dylan prepare el soldador.',
+      'Componentes de estaño de alta pureza hallados en el baúl del lago del bosque. Dylan los necesita para preparar su soldador de lápiz.',
     usageHint: 'Llévaselos al técnico Dylan en el Taller Retro State TS.',
+    usableAction: 'inspect',
+  },
+  'item-baterias-linterna': {
+    id: 'item-baterias-linterna',
+    name: 'Baterías de Litio-Cero',
+    category: 'objeto',
+    categoryLabel: 'SUMINISTRO DE ENERGÍA',
+    accentHex: '#facc15',
+    shortCode: 'BAT-0',
+    description:
+      'Celdas de energía de alta densidad entregadas por Kertz. Activan de forma permanente la linterna integrada en tu mochila para explorar zonas oscuras.',
+    usageHint: 'Una vez obtenidas, pulsa [L] en cualquier momento para encender o apagar la linterna.',
     usableAction: 'inspect',
   },
   'item-soldador-estaño': {
@@ -439,7 +451,7 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     accentHex: '#f97316',
     shortCode: 'SLD-SN',
     description:
-      'Un soldador de lápiz con punta de cobre y carrete de estaño que Dylan afina a mano. Sirve para unir contactos electrónicos partidos sin quemar las pistas del circuito.',
+      'Un soldador de lápiz con punta de cobre y carrete de estaño que Dylan preparó tras recibir el material. Sirve para unir contactos electrónicos partidos.',
     usageHint: 'En la consola de la palanca de seguridad del Sector 03, pulsá [E] para identificar los contactos fríos y soldarlos.',
     usableAction: 'inspect',
   },
@@ -974,6 +986,18 @@ export const RPG_ITEMS: Record<string, RpgItemSpec> = {
     description:
       'Emblema de bronce dorado entregado por el Rey Donkey Kong tras ser purificado de Super KOOPA. Certifica la liberación completa de Isla Orígenes y autoriza el despegue en la nave de Space Invaders.',
     usageHint: 'Insértalo en la consola de la nave de Space Invaders en el hangar del trono para viajar a la Isla de los 80.',
+    usableAction: 'inspect',
+  },
+  'item-nota-codigo-cofre': {
+    id: 'item-nota-codigo-cofre',
+    name: 'Nota código cofre',
+    category: 'cinta-memoria',
+    categoryLabel: 'NOTAS DE MISIÓN',
+    accentHex: '#facc15',
+    shortCode: 'COD-1972',
+    description:
+      'Nota entregada por el enviado del futuro. Registra el código del cofre del abuelo: 1972. Objeto permanente.',
+    usageHint: 'Consúltala desde el inventario para recordar la combinación del cofre (1972).',
     usableAction: 'inspect',
   },
 };
@@ -2116,9 +2140,9 @@ export const RPG_CHESTS: RpgChestSpec[] = [
   {
     id: 'chest-lago-germanio',
     areaId: 'exterior-70s',
-    label: 'Caja Estanca de la Otra Orilla',
-    x: 720,
-    y: 1458,
+    label: 'Cofre de Componentes del Lago',
+    x: 620,
+    y: 1358,
     accentHex: '#fb923c',
     rewardItemIds: ['item-transistores-germanio-lago', 'item-componentes-estano'],
   },
@@ -2354,17 +2378,17 @@ export const RPG_EXAMINABLES: RpgExaminableSpec[] = [
   {
     id: 'exam-gabinete-circuito-anfibio',
     areaId: 'exterior-70s',
-    label: 'Gabinete «Cruce de Circuitos» (1979)',
-    actionLabel: 'Inspeccionar Gabinete',
-    x: 1148,
-    y: 1128,
+    label: 'Gabinete Frogger «Cruce de Circuitos» (1979)',
+    actionLabel: 'Jugar Frogger (E)',
+    x: 856,
+    y: 1344,
     accentHex: '#22c55e',
-    category: 'BOSQUE DE LAS SEÑALES · PROTOTIPO ARCADE',
+    category: 'LAGO DEL BOSQUE · GABINETE FROGGER',
     paragraphs: [
-      'Un gabinete de madera oscura con una pantalla dividida en canales, cables y tres puertos de llegada. El rótulo pintado a mano dice «CRUCE DE CIRCUITOS · 1979».',
-      'El Maestro Kertz guarda el cartucho de prueba. Si lo autoriza, el desafío puede devolver la pieza que necesita el generador.',
+      'Un gabinete arcade ubicado físicamente junto a la orilla del lago del bosque.',
+      'En la pequeña isla del centro del lago se divisa el cofre que guarda los materiales requeridos. Superá el minijuego Frogger para cruzar el lago y acceder al cofre.',
     ],
-    hint: 'Habla con Kertz en Retro State TS para activar el desafío.',
+    hint: 'Presioná [E] para iniciar el desafío Frogger y cruzar el lago.',
   },
   // --- CUEVA GLITCH RPG EXAMINABLES ---
   {

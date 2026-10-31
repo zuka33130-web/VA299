@@ -7049,7 +7049,8 @@ function drawOrigenForestLake(
   camX: number,
   camY: number,
   vw: number,
-  vh: number
+  vh: number,
+  froggerCleared = false
 ): void {
   const { x1, x2, y1, y2, islet } = ORIGEN_FOREST_LAKE;
   const w = x2 - x1;
@@ -7164,6 +7165,25 @@ function drawOrigenForestLake(
     ctx.fillRect(rx, iy - 8 - (r % 2) * 3, 1, 8 + (r % 2) * 3);
     ctx.fillStyle = '#7a9a3a';
     ctx.fillRect(rx, iy - 9 - (r % 2) * 3, 1, 3);
+  }
+
+  // Pasarela de troncos y rocas emergentes al superar Frogger
+  if (froggerCleared) {
+    const bridgeStartX = ix + 24;
+    const bridgeEndX = x2 - 8;
+    const count = 6;
+    for (let s = 0; s <= count; s++) {
+      const logX = bridgeStartX + ((bridgeEndX - bridgeStartX) * s) / count;
+      const logY = iy + Math.sin(s * 0.8) * 2;
+      ctx.fillStyle = 'rgba(5, 20, 24, 0.45)';
+      ctx.fillRect(logX - 8, logY + 4, 16, 6);
+      ctx.fillStyle = '#6b4d2b';
+      ctx.fillRect(logX - 7, logY - 3, 14, 6);
+      ctx.fillStyle = '#8a6639';
+      ctx.fillRect(logX - 6, logY - 2, 12, 2);
+      ctx.fillStyle = '#4a331a';
+      ctx.fillRect(logX - 7, logY + 3, 14, 1);
+    }
   }
 
   // Juncos y nenúfares en los bordes.
@@ -7673,7 +7693,8 @@ export function renderIsland70sFrame(params: IslandRenderFrameParams): void {
   drawOriginGroundDressing(ctx, camX, camY, vw, vh, southShortcutActive, glitchTrailCleared);
 
   // 3A-0. LAGO DEL BOSQUE DE LAS SEÑALES (corta el paso directo a la otra orilla)
-  drawOrigenForestLake(ctx, elapsed, reducedMotion, camX, camY, vw, vh);
+  const anfibioCleared = allUnlocked || Boolean(progressState.games['frogger']?.memoryUnlocked);
+  drawOrigenForestLake(ctx, elapsed, reducedMotion, camX, camY, vw, vh, anfibioCleared);
 
   // 3A-bis. CANAL DE LA CALA Y REJA LÁSER DEL SECTOR 03
   drawOrigenCalaCanal(ctx, origenBridgeOpen, bridgeProgress, elapsed, camX, camY, vw, vh);
@@ -9157,7 +9178,7 @@ export function renderIsland70sFrame(params: IslandRenderFrameParams): void {
     Boolean(progressState.rpg.questStates['quest-generador-retrostate']) ||
     Boolean(progressState.rpg.questStates['quest-laser-seguridad']) ||
     progressState.rpg.inventoryItems.includes('item-pieza-generador');
-  const anfibioCleared = Boolean(progressState.games['frogger']?.memoryUnlocked);
+  const anfibioRestored = Boolean(progressState.games['frogger']?.memoryUnlocked);
   if (
     isWorldBoxVisible(
       ISLAND_KEY_COORDS.origenFroggerCabinet.x - 30,
@@ -9178,7 +9199,7 @@ export function renderIsland70sFrame(params: IslandRenderFrameParams): void {
           ISLAND_KEY_COORDS.origenFroggerCabinet.x,
           ISLAND_KEY_COORDS.origenFroggerCabinet.y,
           anfibioActive,
-          anfibioCleared,
+          anfibioRestored,
           elapsed
         ),
     });
